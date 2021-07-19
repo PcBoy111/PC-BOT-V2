@@ -4,7 +4,6 @@ Commands:
     pasta
 """
 
-from copy import copy
 from difflib import get_close_matches
 from random import choice
 
@@ -72,7 +71,7 @@ async def add(message: discord.Message, name: str.lower, copypasta: Annotate.Con
 
     # If the pasta doesn't exist, set it
     pastas.data[parsed_name] = copypasta
-    pastas.save()
+    await pastas.asyncsave()
     await client.say(message, "Pasta `{}` set.".format(name))
 
 
@@ -85,7 +84,7 @@ async def remove(message: discord.Message, name: Annotate.LowerContent):
     assert parsed_name in pastas.data, "No pasta with name `{}`.".format(name)
 
     copypasta = pastas.data.pop(parsed_name)
-    pastas.save()
+    await pastas.asyncsave()
     await client.say(message, "Pasta `{}` removed. In case this was a mistake, "
                                    "here's the pasta: ```{}```".format(name, copypasta))
 
@@ -94,7 +93,7 @@ async def remove(message: discord.Message, name: Annotate.LowerContent):
 async def on_message(message: discord.Message):
     """ Use shorthand |<pasta ...> for displaying pastas and remove the user's message. """
     if message.content.startswith("|") and not message.content.startswith("||"):
-        if message.channel.permissions_for(message.server.me).manage_messages:
+        if message.channel.permissions_for(message.guild.me).manage_messages:
             asyncio.ensure_future(client.delete_message(message))
         try:
             embed, content = await generate_pasta(message.content[1:].lower())

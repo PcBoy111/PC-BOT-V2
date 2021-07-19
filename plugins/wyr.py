@@ -1,17 +1,18 @@
 """ Would you rather? This plugin includes would you rather functionality
 """
-
+import asyncio
 import random
 import re
 
 import discord
 
 import plugins
-from pcbot import utils, Config
+from pcbot import Config
+
 client = plugins.client  # type: discord.Client
 
-
-db = Config("would-you-rather", data=dict(timeout=10, responses=["**{name}** would **{choice}**!"], questions=[]), pretty=True)
+db = Config("would-you-rather", data=dict(timeout=10, responses=["**{name}** would **{choice}**!"], questions=[]),
+            pretty=True)
 command_pattern = re.compile(r"(.+)(?:\s+or|\s*,)\s+([^?]+)\?*")
 sessions = set()  # All running would you rather's are in this set
 
@@ -30,7 +31,7 @@ def get_choice(choices: list, choice: str):
     """ Get the chosen option. This accept 1 and 2 as numbers. """
     if choice == "1":
         return 0
-    
+
     if choice == "2":
         return 1
 
@@ -49,13 +50,13 @@ def get_choice(choices: list, choice: str):
 
 
 @plugins.command(aliases="wyr rather either")
-async def wouldyourather(message: discord.Message, opt: options=None):
+async def wouldyourather(message: discord.Message, opt: options = None):
     """ Ask the bot if he would rather, or have the bot ask you.
 
     **Examples:**
 
     Registering a choice: `!wouldyourather lie or be lied to`
-    
+
     Asking the bot: `!wouldyourather`"""
     # If there are no options, the bot will ask the questions (if there are any to choose from)
     if opt is None:
@@ -73,13 +74,16 @@ async def wouldyourather(message: discord.Message, opt: options=None):
 
         # Wait for replies from anyone in the channel
         while True:
-            reply = await client.wait_for_message(timeout=timeout, channel=message.channel,
-                                                  check=lambda m: m.author not in replied)
+            def check(m):
+                return m.channel == message.channel and m.author not in replied
+
+            try:
+                reply = await client.wait_for("message", timeout=timeout, check=check)
             # Break on timeout
-            if reply is None:
+            except asyncio.TimeoutError:
                 break
 
-            # Check if the choice is vlaid
+            # Check if the choice is valid
             choice = get_choice(choices, reply.content)
             if choice is None:
                 continue
@@ -92,13 +96,14 @@ async def wouldyourather(message: discord.Message, opt: options=None):
             question["answers"][choice] += 1
 
             name = reply.author.display_name
-            response = random.choice(db.data["responses"]).format(name=name, NAME=name.upper(), choice=choices[choice])
+            response = random.choice(db.data["responses"]).format(name=name, NAME=name.upper(),
+                                                                  choice=choices[choice])
             await client.say(message, response)
 
         # Say the total tallies
         await client.say(message, "A total of {0} would **{2}**, while {1} would **{3}**!".format(
             *question["answers"], *choices))
-        db.save()
+        await db.asyncsave()
         sessions.remove(message.channel.id)
 
     # Otherwise, the member asked a question to the bot
@@ -107,7 +112,7 @@ async def wouldyourather(message: discord.Message, opt: options=None):
             choices=list(opt),
             answers=[0, 0]
         ))
-        db.save()
+        await db.asyncsave()
 
         answer = random.choice(opt)
         await client.say(message, "**I would {}**!".format(answer))
@@ -119,7 +124,7 @@ async def remove(message: discord.Message, opt: options):
     for q in db.data["questions"]:
         if q["choices"][0] == opt[0] and q["choices"][1] == opt[1]:
             db.data["questions"].remove(q)
-            db.save()
+            await db.asyncsave()
             await client.say(message, "**Entry removed.**")
             break
     else:

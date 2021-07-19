@@ -6,10 +6,16 @@ setting the bot's version and a class for creating configs.
 
 import json
 from os.path import exists
-from os import mkdir
+from os import mkdir, walk, path, rename
 
 import discord
 
+try:
+    import aiofiles
+
+    async_io = True
+except ImportError:
+    async_io = False
 
 github_repo = "pckv/pcbot/"
 default_command_prefix = "!"
@@ -29,10 +35,41 @@ def set_version(ver: str):
     return version
 
 
+def migrate():
+    directory = "config/"
+    find = "server"
+    replace = "guild"
+    for root, dirs, filenames in walk(directory):
+        dirs[:] = [d for d in dirs if d != '.git']  # skip .git dirs
+        for filename in filenames:
+            path1 = path.join(root, filename)
+            # search and replace within files themselves
+            filepath = path.join(root, filename)
+            with open(filepath) as f:
+                file_contents = json.load(f)
+                if isinstance(file_contents, dict):
+                    for keys in list(file_contents.keys()):
+                        if find in keys:
+                            with open(filepath, "w") as e:
+                                file_contents[keys.replace(find, replace)] = file_contents[keys]
+                                del file_contents[keys]
+                                if "bot_meta" in filename or "blacklist" in filename or "osu" in filename or \
+                                        "summary_options" in filename or "would_you-rather" in filename:
+                                    json.dump(file_contents, e, sort_keys=True, indent=4)
+                                else:
+                                    json.dump(file_contents, e)
+
+            # rename files (ignoring file extensions)
+            filename_zero, extension = path.splitext(filename)
+            if find in filename_zero:
+                path2 = path.join(root, filename_zero.replace(find, replace) + extension)
+                rename(path1, path2)
+
+
 class Config:
     config_path = "config/"
 
-    def __init__(self, filename: str, data=None, load: bool=True, pretty=False):
+    def __init__(self, filename: str, data=None, load: bool = True, pretty=False):
         """ Setup the config file if it does not exist.
 
         :param filename: usually a string representing the module name.
@@ -76,6 +113,17 @@ class Config:
             else:
                 json.dump(self.data, f)
 
+    async def asyncsave(self):
+        """ Write the current config to file asynchronously. """
+        if async_io:
+            async with aiofiles.open(self.filepath, "w") as f:
+                if self.pretty:
+                    await f.write(json.dumps(self.data, sort_keys=True, indent=4))
+                else:
+                    await f.write(json.dumps(self.data))
+        else:
+            self.save()
+
     def load(self):
         """ Load the config from file if it exists.
 
@@ -88,34 +136,34 @@ class Config:
         return None
 
 
-server_config = Config("server-config", data={})
+guild_config = Config("guild-config", data={})
 
 
-def set_server_config(server: discord.Server, key: str, value):
-    """ Set a server config value. """
-    if server.id not in server_config.data:
-        server_config.data[server.id] = {}
+async def set_guild_config(guild: discord.Guild, key: str, value):
+    """ Set a guild config value. """
+    if str(guild.id) not in guild_config.data:
+        guild_config.data[str(guild.id)] = {}
 
     # Change the value or remove it from the list if the value is None
     if value is None:
-        del server_config.data[server.id][key]
+        del guild_config.data[str(guild.id)][key]
     else:
-        server_config.data[server.id][key] = value
+        guild_config.data[str(guild.id)][key] = value
 
-    server_config.save()
+    await guild_config.asyncsave()
 
 
-def server_command_prefix(server: discord.Server):
-    """ Get the server's command prefix. """
-    if server is not None and server.id in server_config.data:
-        return server_config.data[server.id].get("command_prefix", default_command_prefix)
+def guild_command_prefix(guild: discord.Guild):
+    """ Get the guild's command prefix. """
+    if guild is not None and str(guild.id) in guild_config.data:
+        return guild_config.data[str(guild.id)].get("command_prefix", default_command_prefix)
 
     return default_command_prefix
 
 
-def server_case_sensitive_commands(server: discord.Server):
-    """ Get the server's case sensitivity settings. """
-    if server is not None and server.id in server_config.data:
-        return server_config.data[server.id].get("case_sensitive_commands", default_case_sensitive_commands)
+def guild_case_sensitive_commands(guild: discord.Guild):
+    """ Get the guild's case sensitivity settings. """
+    if guild is not None and str(guild.id) in guild_config.data:
+        return guild_config.data[str(guild.id)].get("case_sensitive_commands", default_case_sensitive_commands)
 
     return default_case_sensitive_commands

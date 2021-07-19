@@ -4,7 +4,7 @@ Blacklist
 .. toctree::
 
 The blacklist plugin handles automatic deletion of messages with blacklisted words, phrases or regex patterns.
-It's feature complete with custom responses, and configurations globally, per server or per channel.
+It's feature complete with custom responses, and configurations globally, per guild or per channel.
 
 The blacklist configuration will be in ``config/blacklist.json`` after the plugin is loaded the first time.
 To enable the blacklist feature, change ``"enabled": false`` to ``"enabled": true`` in the configuration file.
@@ -32,17 +32,17 @@ Categories
 Any written dataset can be assigned to the three following categories for further customization:
 
 * *global*: the global configuration with only one dataset
-* *server*: a list of datasets specific to servers
+* *guild*: a list of datasets specific to guilds
 * *channel*: a list of datasets specific to channels
 
-For instance, to blacklist the phrase ``raspberry`` in a server with id ``314159265358979323``:
+For instance, to blacklist the phrase ``raspberry`` in a guild with id ``314159265358979323``:
 
 .. code-block:: json
 
     {
         "enabled": true,
         "global": {},
-        "server": [
+        "guild": [
             {
                 "id": "314159265358979323",
                 "match_patterns": [
@@ -56,13 +56,13 @@ For instance, to blacklist the phrase ``raspberry`` in a server with id ``314159
 .. note::
 
     The bot will automatically make it's definitive dataset for any given channel during runtime. The process starts
-    with the global category, and moves down to the server, and then the channel categories. Any given keywords in a
+    with the global category, and moves down to the guild, and then the channel categories. Any given keywords in a
     channel config will override keywords in the global config.
 
 .. note::
 
     Blacklist patterns in :data:`match_patterns` and :data:`regex_patterns` will be **appended** to the optional
-    server and global config. To change this behaviour, see the :data:`override` keyword.
+    guild and global config. To change this behaviour, see the :data:`override` keyword.
 
 Dataset
 ~~~~~~~
@@ -76,13 +76,13 @@ Keep in mind that keywords all have a default value and can be omitted (with the
 
 .. py:data:: id
 
-`str` |-| channel or server id.
+`str` |-| channel or guild id.
 
 **default**: ``null``
 
-The id is **required** when creating a dataset for a server or a channel. The id can be obtained in discord by
+The id is **required** when creating a dataset for a guild or a channel. The id can be obtained in discord by
 enabling developer mode in settings, and selecting **Copy** |_| **ID** in the right-click context menu of
-the server or channel.
+the guild or channel.
 
 .. code-block:: json
 
@@ -157,7 +157,7 @@ Valid substitutions are:
 * ``{pattern}`` |-| the blacklisted pattern
 * ``{user}`` |-| display-name of the user
 * ``{mention}`` |-| formatted mention of the user
-* ``{server}`` |-| the server name
+* ``{guild}`` |-| the guild name
 * ``{channel}`` |-| the channel mentioned
 
 .. code-block:: json
@@ -168,9 +168,9 @@ Valid substitutions are:
             "match_patterns": [
                 "strawberry"
             ],
-            "response": "{mention}, {server} permits that word from being used."
+            "response": "{mention}, {guild} permits that word from being used."
         },
-        "server": [],
+        "guild": [],
         "channel": [
             {
                 "id": "314159265358979323",
@@ -191,12 +191,12 @@ Valid substitutions are:
 
 .. note::
 
-    As with any other keyword, you can disable responses in specific servers or channels by overriding the response
+    As with any other keyword, you can disable responses in specific guilds or channels by overriding the response
     keyword with ``"response": null`` or ``"response": ""``. This is demonstrated in the example above.
 
 .. py:data:: override
 
-`bool` |-| when true, :data:`match_patterns` and :data:`regex_patterns` will be specific to their channel or server.
+`bool` |-| when true, :data:`match_patterns` and :data:`regex_patterns` will be specific to their channel or guild.
 
 **default**: ``false``
 

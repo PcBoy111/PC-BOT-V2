@@ -18,7 +18,6 @@ import asyncio
 import plugins
 from pcbot import Config, Annotate
 
-
 client = plugins.client  # type: discord.Client
 
 time_cfg = Config("time", data=dict(countdown={}, timezone={}))
@@ -57,7 +56,7 @@ async def init_dt(message: discord.Message, time: str, timezone: str):
     return dt, timezone
 
 
-def format_when(dt: pendulum.Pendulum, timezone: str="UTC"):
+def format_when(dt: pendulum.Pendulum, timezone: str = "UTC"):
     """ Format when something will happen"""
     now = pendulum.utcnow()
 
@@ -76,7 +75,7 @@ def format_when(dt: pendulum.Pendulum, timezone: str="UTC"):
 
 
 @plugins.command(aliases="timezone")
-async def when(message: discord.Message, *time, timezone: tz_arg="UTC"):
+async def when(message: discord.Message, *time, timezone: tz_arg = "UTC"):
     """ Convert time from specified timezone or UTC to formatted string of e.g.
     `2 hours from now`. """
     timezone_name = timezone
@@ -118,7 +117,7 @@ async def countdown(message: discord.Message, tag: Annotate.Content):
 
 
 @countdown.command(aliases="add", pos_check=True)
-async def create(message: discord.Message, tag: tag_arg, *time, timezone: tz_arg="UTC"):
+async def create(message: discord.Message, tag: tag_arg, *time, timezone: tz_arg = "UTC"):
     """ Create a countdown with the specified tag, using the same format as `{pre}when`. """
     assert tag not in time_cfg.data["countdown"], "Countdown with tag `{}` already exists.".format(tag)
 
@@ -129,9 +128,9 @@ async def create(message: discord.Message, tag: tag_arg, *time, timezone: tz_arg
     assert seconds > 0, "A countdown has to be set in the future."
 
     cd = dict(time=dt.to_datetime_string(), tz=timezone, tz_name=timezone_name, tag=tag,
-              author=message.author.id, channel=message.channel.id)
+              author=str(message.author.id), channel=str(message.channel.id))
     time_cfg.data["countdown"][tag] = cd
-    time_cfg.save()
+    await time_cfg.asyncsave()
     await client.say(message, "Added countdown with tag `{}`.".format(tag))
 
     client.loop.create_task(wait_for_reminder(cd, seconds))
@@ -145,21 +144,21 @@ async def delete(message: discord.Message, tag: Annotate.Content):
     assert tag in time_cfg.data["countdown"], "Countdown with tag `{}` does not exist.".format(tag)
 
     author_id = time_cfg.data["countdown"][tag]["author"]
-    assert message.author.id == author_id, "You are not the author of this tag ({}).".format(
+    assert str(message.author.id) == author_id, "You are not the author of this tag ({}).".format(
         getattr(discord.utils.get(client.get_all_members(), id=author_id), "name", None) or "~~Unknown~~")
 
     del time_cfg.data["countdown"][tag]
-    time_cfg.save()
+    await time_cfg.asyncsave()
     await client.say(message, "Countdown with tag `{}` removed.".format(tag))
 
 
 @countdown.command(name="list")
-async def countdown_list(message: discord.Message, author: discord.Member=None):
+async def countdown_list(message: discord.Message, author: discord.Member = None):
     """ List all countdowns or all countdowns by the specified author. """
     assert time_cfg.data["countdown"], "There are no countdowns created."
 
     if author:
-        tags = (tag for tag, value in time_cfg.data["countdown"].items() if value["author"] == author.id)
+        tags = (tag for tag, value in time_cfg.data["countdown"].items() if value["author"] == str(author.id))
     else:
         tags = (tag for tag in time_cfg.data["countdown"].keys())
 
@@ -169,16 +168,19 @@ async def countdown_list(message: discord.Message, author: discord.Member=None):
 
 async def wait_for_reminder(cd, seconds):
     """ Wait for and send the reminder. This is a separate function so that . """
-    await asyncio.sleep(seconds)
+    try:
+        await asyncio.sleep(seconds)
+    except asyncio.futures.CancelledError:
+        pass
 
-    channel = client.get_channel(cd["channel"])
-    author = channel.server.get_member(cd["author"])
+    channel = client.get_channel(int(cd["channel"]))
+    author = channel.guild.get_member(int(cd["author"]))
 
     msg = "Hey {0}, your countdown **{cd[tag]}** at `{cd[time]} {cd[tz_name]}` is over!".format(author.mention, cd=cd)
     await client.send_message(channel, msg)
 
     del time_cfg.data["countdown"][cd["tag"]]
-    time_cfg.save()
+    await time_cfg.asyncsave()
 
 
 async def handle_countdown_reminders():
@@ -210,7 +212,7 @@ async def handle_countdown_reminders():
         # If below, remove the countdown and continue
         if seconds < -10:
             del time_cfg.data["countdown"][cd["tag"]]
-            time_cfg.save()
+            await time_cfg.asyncsave()
             continue
         elif seconds < 0:
             seconds = 0

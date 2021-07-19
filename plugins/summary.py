@@ -11,13 +11,13 @@ import discord
 
 from pcbot import utils, Annotate, config, Config
 import plugins
+
 client = plugins.client  # type: discord.Client
 
 try:
     import markovify
 except ImportError:
     logging.warning("Markovify could not be imported and as such !summary +strict will not work.")
-
 
 NEW_LINE_IDENTIFIER = " {{newline}} "
 
@@ -45,12 +45,12 @@ summary_data = Config("summary_data", data=dict(channels={}))
 
 
 def to_persistent(message: discord.Message):
-    return dict(content=message.clean_content, author=message.author.id, bot=message.author.bot)
+    return dict(content=message.clean_content, author=str(message.author.id), bot=message.author.bot)
 
 
-async def update_messages(channel: discord.Channel):
+async def update_messages(channel: discord.TextChannel):
     """ Download messages. """
-    messages = stored_messages[channel.id]  # type: deque
+    messages = stored_messages[str(channel.id)]  # type: deque
 
     # We only want to log messages when there are none
     # Any messages after this logging will be logged in the on_message event
@@ -62,7 +62,7 @@ async def update_messages(channel: discord.Channel):
 
     # Download logged messages
     try:
-        async for m in client.logs_from(channel, limit=logs_from_limit):
+        async for m in channel.history(limit=logs_from_limit):
             if not m.content:
                 continue
 
@@ -175,7 +175,7 @@ def markov_messages(messages, coherent=False):
     return " ".join(imitated)
 
 
-def filter_messages(message_content: list, phrase: str, regex: bool=False, case: bool=False):
+def filter_messages(message_content: list, phrase: str, regex: bool = False, case: bool = False):
     """ Filter messages by searching and yielding each message. """
     for content in message_content:
         if regex:
@@ -201,13 +201,13 @@ def is_valid_option(arg: str):
 
 def filter_messages_by_arguments(messages, channel, member, bots):
     # Split the messages into content and filter member and phrase
-    messages = (m for m in messages if not member or m["author"] in [mm.id for mm in member])
+    messages = (m for m in messages if not member or m["author"] in [str(mm.id) for mm in member])
 
     # Filter bot messages or own messages if the option is enabled in the config
     if not bots:
         messages = (m for m in messages if not m["bot"])
     elif summary_options.data["no_self"]:
-        messages = (m for m in messages if not m["author"] == client.user.id)
+        messages = (m for m in messages if not m["author"] == str(client.user.id))
 
     # Convert all messages to content
     return (m["content"] for m in messages)
@@ -217,10 +217,11 @@ def is_endswith(phrase):
     return phrase.endswith("...") and len(phrase.split()) in (1, 2)
 
 
-@plugins.command(usage="([*<num>] [@<user/role> ...] [#<channel>] [+re(gex)] [+case] [+tts] [+(no)bot] [+coherent] [+loose]) "
-                       "[phrase ...]",
-                 pos_check=is_valid_option, aliases="markov")
-async def summary(message: discord.Message, *options, phrase: Annotate.Content=None):
+@plugins.command(
+    usage="([*<num>] [@<user/role> ...] [#<channel>] [+re(gex)] [+case] [+tts] [+(no)bot] [+coherent] [+loose]) "
+          "[phrase ...]",
+    pos_check=is_valid_option, aliases="markov")
+async def summary(message: discord.Message, *options, phrase: Annotate.Content = None):
     """ Run a markov chain through the past 5000 messages + up to another 5000
     messages after first use. This command needs some time after the plugin reloads
     as it downloads the past 5000 messages in the given channel. """
@@ -229,162 +230,162 @@ async def summary(message: discord.Message, *options, phrase: Annotate.Content=N
     regex, case, tts, coherent, strict = False, False, False, False, True
     bots = not summary_options.data["no_bot"]
 
-    for value in options:
-        num_match = valid_num.match(value)
-        if num_match:
-            assert not num
-            num = int(num_match.group("num"))
-            continue
+    async with message.channel.typing():
+        for value in options:
+            num_match = valid_num.match(value)
+            if num_match:
+                assert not num
+                num = int(num_match.group("num"))
+                continue
 
-        member_match = valid_member.match(value)
-        if member_match:
-            member.append(message.server.get_member(member_match.group("id")))
-            continue
+            member_match = valid_member.match(value)
+            if member_match:
+                member.append(message.guild.get_member(int(member_match.group("id"))))
+                continue
 
-        member_match = valid_member_silent.match(value)
-        if member_match:
-            member.append(utils.find_member(message.server, member_match.group("name")))
-            continue
+            member_match = valid_member_silent.match(value)
+            if member_match:
+                member.append(utils.find_member(message.guild, member_match.group("name")))
+                continue
 
-        role_match = valid_role.match(value)
-        if role_match:
-            role = discord.utils.get(message.server.roles, id=role_match.group("id"))
-            member.extend(m for m in message.server.members if role in m.roles)
-            continue
+            role_match = valid_role.match(value)
+            if role_match:
+                role = discord.utils.get(message.guild.roles, id=int(role_match.group("id")))
+                member.extend(m for m in message.guild.members if role in m.roles)
+                continue
 
-        channel_match = valid_channel.match(value)
-        if channel_match:
-            assert not channel
-            channel = utils.find_channel(message.server, channel_match.group())
-            continue
+            channel_match = valid_channel.match(value)
+            if channel_match:
+                assert not channel
+                channel = utils.find_channel(message.guild, channel_match.group())
+                continue
 
-        if value in valid_options:
-            if value == "+re" or value == "+regex":
-                regex = True
-            if value == "+case":
-                case = True
-            if value == "+tts":
-                tts = True
-            if value == "+coherent":
-                coherent = True
-            if value == "+loose":
-                strict = False
+            if value in valid_options:
+                if value == "+re" or value == "+regex":
+                    regex = True
+                if value == "+case":
+                    case = True
+                if value == "+tts":
+                    tts = True
+                if value == "+coherent":
+                    coherent = True
+                if value == "+loose":
+                    strict = False
 
-            bots = False if value == "+nobot" else True if value == "+bot" else bots
+                bots = False if value == "+nobot" else True if value == "+bot" else bots
 
-    # Assign defaults and number of summaries limit
-    is_privileged = message.author.permissions_in(message.channel).manage_messages
+        # Assign defaults and number of summaries limit
+        is_privileged = message.author.permissions_in(message.channel).manage_messages
 
-    if num is None or num < 1:
-        num = 1
-    elif num > max_admin_summaries and is_privileged:
-        num = max_admin_summaries
-    elif num > max_summaries:
-        num = max_summaries if not is_privileged else num
+        if num is None or num < 1:
+            num = 1
+        elif num > max_admin_summaries and is_privileged:
+            num = max_admin_summaries
+        elif num > max_summaries:
+            num = max_summaries if not is_privileged else num
 
-    if not channel:
-        channel = message.channel
+        if not channel:
+            channel = message.channel
 
-    # Check channel permissions after the given channel has been decided
-    assert channel.permissions_for(message.server.me).read_message_history, "**I can't see this channel.**"
-    assert not tts or message.author.permissions_in(message.channel).send_tts_messages, \
-        "**You don't have permissions to send tts messages in this channel.**"
+        # Check channel permissions after the given channel has been decided
+        assert channel.permissions_for(message.guild.me).read_message_history, "**I can't see this channel.**"
+        assert not tts or message.author.permissions_in(message.channel).send_tts_messages, \
+            "**You don't have permissions to send tts messages in this channel.**"
 
-    await client.send_typing(message.channel)
-    
-    if channel.id in summary_options.data["persistent_channels"]:
-        messages = summary_data.data["channels"][channel.id]
-    else:
-        await update_task.wait()
-        await update_messages(channel)
-        messages = stored_messages[channel.id]
-    
-    message_content = filter_messages_by_arguments(messages, channel, member, bots)
-
-    # Replace new lines with text to make them persist through splitting
-    message_content = (s.replace("\n", NEW_LINE_IDENTIFIER) for s in message_content)
-
-    # Filter looking for phrases if specified
-    if phrase and not is_endswith(phrase):
-        message_content = list(filter_messages(message_content, phrase, regex, case))
-
-    command_prefix = config.server_command_prefix(message.server)
-    # Clean up by removing all commands from the summaries
-    if phrase is None or not phrase.startswith(command_prefix):
-        message_content = [s for s in message_content if not s.startswith(command_prefix)]
-
-    # Check if we even have any messages
-    assert message_content, on_no_messages.format(message)
-
-    markovify_model = None
-    if strict:
-        try:
-            markovify_model = markovify.Text(message_content)
-        except NameError:
-            logging.warning("+strict was used but markovify is not imported")
-            strict = False
-        except KeyError:
-            markovify_model = None
-
-    # Generate the summary, or num summaries
-    for i in range(num):
-        if strict and markovify_model:
-            if phrase and is_endswith(phrase):
-                try:
-                    sentence = markovify_model.make_sentence_with_start(phrase[:-3])
-                except KeyError:
-                    sentence = markovify_model.make_sentence(tries=1000)
-
-            else:
-                sentence = markovify_model.make_sentence(tries=1000)
+        if str(channel.id) in summary_options.data["persistent_channels"]:
+            messages = summary_data.data["channels"][str(channel.id)]
         else:
-            sentence = markov_messages(message_content, coherent)
+            await update_task.wait()
+            await update_messages(channel)
+            messages = stored_messages[str(channel.id)]
 
-        if not sentence:
-            sentence = markov_messages(message_content, coherent)
+        message_content = filter_messages_by_arguments(messages, channel, member, bots)
 
-        assert sentence, on_fail.format(message)
+        # Replace new lines with text to make them persist through splitting
+        message_content = (s.replace("\n", NEW_LINE_IDENTIFIER) for s in message_content)
 
-        # Convert new line identifiers back to characters
-        sentence = sentence.replace(NEW_LINE_IDENTIFIER.strip(" "), "\n")
+        # Filter looking for phrases if specified
+        if phrase and not is_endswith(phrase):
+            message_content = list(filter_messages(message_content, phrase, regex, case))
 
-        await client.send_message(message.channel, sentence, tts=tts)
+        command_prefix = config.guild_command_prefix(message.guild)
+        # Clean up by removing all commands from the summaries
+        if phrase is None or not phrase.startswith(command_prefix):
+            message_content = [s for s in message_content if not s.startswith(command_prefix)]
+
+        # Check if we even have any messages
+        assert message_content, on_no_messages.format(message)
+
+        markovify_model = None
+        if strict:
+            try:
+                markovify_model = markovify.Text(message_content)
+            except NameError:
+                logging.warning("+strict was used but markovify is not imported")
+                strict = False
+            except KeyError:
+                markovify_model = None
+
+        # Generate the summary, or num summaries
+        for i in range(num):
+            if strict and markovify_model:
+                if phrase and is_endswith(phrase):
+                    try:
+                        sentence = markovify_model.make_sentence_with_start(phrase[:-3])
+                    except KeyError:
+                        sentence = markovify_model.make_sentence(tries=1000)
+
+                else:
+                    sentence = markovify_model.make_sentence(tries=1000)
+            else:
+                sentence = markov_messages(message_content, coherent)
+
+            if not sentence:
+                sentence = markov_messages(message_content, coherent)
+
+            assert sentence, on_fail.format(message)
+
+            # Convert new line identifiers back to characters
+            sentence = sentence.replace(NEW_LINE_IDENTIFIER.strip(" "), "\n")
+
+            await client.send_message(message.channel, sentence, tts=tts)
 
 
 @plugins.event(bot=True, self=True)
 async def on_message(message: discord.Message):
     """ Whenever a message is sent, see if we can update in one of the channels. """
-    if message.channel.id in stored_messages and message.content:
-        stored_messages[message.channel.id].append(to_persistent(message))
-    
+    if str(message.channel.id) in stored_messages and message.content:
+        stored_messages[str(message.channel.id)].append(to_persistent(message))
+
     # Store to persistent if enabled for this channel
-    if message.channel.id in summary_options.data["persistent_channels"]:
-        summary_data.data["channels"][message.channel.id].append(to_persistent(message))
-        summary_data.save()
+    if str(message.channel.id) in summary_options.data["persistent_channels"]:
+        summary_data.data["channels"][str(message.channel.id)].append(to_persistent(message))
+        await summary_data.asyncsave()
 
 
 @summary.command(owner=True)
 async def enable_persistent_messages(message: discord.Message):
     """ Stores every message in this channel in persistent storage. """
-    if message.channel.id in summary_options.data["persistent_channels"]:
+    if str(message.channel.id) in summary_options.data["persistent_channels"]:
         await client.say(message, "Persistent messages are already enabled and tracked in this channel")
         return
 
-    summary_options.data["persistent_channels"].append(message.channel.id)
-    summary_options.save()
+    summary_options.data["persistent_channels"].append(str(message.channel.id))
+    await summary_options.asyncsave()
 
     await client.say(message, "Downloading messages. This may take a while.")
-    
+
     # Create the persistent storage
-    summary_data.data["channels"][message.channel.id] = []
+    summary_data.data["channels"][str(message.channel.id)] = []
 
     # Download EVERY message in the channel
-    async for m in client.logs_from(message.channel, limit=1000000):
+    async for m in message.channel.history(before=message, limit=None):
         if not m.content:
             continue
 
         # We have no messages, so insert each from the left, leaving us with the oldest at index -1
-        summary_data.data["channels"][message.channel.id].insert(0, to_persistent(m))
+        summary_data.data["channels"][str(message.channel.id)].insert(0, to_persistent(m))
 
-    summary_data.save()
-    await client.say(message, "Downloaded {} messages!".format(len(summary_data.data["channels"][message.channel.id])))
+    await summary_data.asyncsave()
+    await client.say(message,
+                     "Downloaded {} messages!".format(len(summary_data.data["channels"][str(message.channel.id)])))

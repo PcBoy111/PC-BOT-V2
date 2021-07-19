@@ -15,7 +15,7 @@ import discord
 import json
 
 import plugins
-from pcbot import Config, Annotate, server_command_prefix, utils
+from pcbot import Config, Annotate, guild_command_prefix, utils
 
 try:
     from PIL import Image
@@ -24,7 +24,6 @@ except:
     logging.warning("PIL could not be loaded. The pokedex works like usual, however sprites will remain 1x scaled.")
 else:
     resize = True
-
 
 client = plugins.client  # type: discord.Client
 
@@ -91,7 +90,7 @@ def format_type(*types):
     return " | ".join(t.capitalize() for t in types if t is not None)
 
 
-def get_pokemon(name_or_id: str, assert_on_error: bool=True):
+def get_pokemon(name_or_id: str, assert_on_error: bool = True):
     """ Returns a pokemon with the given name or id string. """
     # Get the requested pokemon name
     name = name_or_id
@@ -146,11 +145,11 @@ async def pokedex_(message: discord.Message, name_or_id: Annotate.LowerCleanCont
     pokemon = pokedex[name]
 
     # Send an image if the bots has Attach Files permission or the message is a dm
-    if message.server is None or message.channel.permissions_for(message.server.me).attach_files:
-        # Get the server's scale factor
-        if not message.channel.is_private \
-                and message.server.id in pokedex_config.data and "scale-factor" in pokedex_config.data[message.server.id]:
-            scale_factor = pokedex_config.data[message.server.id]["scale-factor"]
+    if message.guild is None or message.channel.permissions_for(message.guild.me).attach_files:
+        # Get the guild's scale factor
+        if not isinstance(message.channel, discord.abc.PrivateChannel) \
+                and message.guild.id in pokedex_config.data and "scale-factor" in pokedex_config.data[message.guild.id]:
+            scale_factor = pokedex_config.data[message.guild.id]["scale-factor"]
         else:
             scale_factor = default_scale_factor
 
@@ -243,14 +242,14 @@ async def egg(message: discord.Message, egg_type: Annotate.LowerCleanContent):
         distance, ", ".join(sorted(pokemon_criteria))))
 
 
-def assert_type(slot: str, server: discord.Server):
+def assert_type(slot: str, guild: discord.Guild):
     """ Assert if a type does not exist, and show the valid types. """
     match = get_close_matches(slot, api["types"], n=1, cutoff=0.4)
 
     if match:
         matches_string = " Perhaps you meant `{}`?".format(match[0])
     else:
-        matches_string = " See `{}help pokedex type`.".format(server_command_prefix(server))
+        matches_string = " See `{}help pokedex type`.".format(guild_command_prefix(guild))
     assert slot in api["types"], "**{}** is not a valid pokemon type.{}".format(
         slot.capitalize(), matches_string)
 
@@ -270,7 +269,7 @@ def defense_method(type):
         yield value["name"], value["damage_factor"][type]
 
 
-def resolve_damage_factor(method, type_1: str, type_2: str=None):
+def resolve_damage_factor(method, type_1: str, type_2: str = None):
     """ Combine the damage factors when there are two types. """
     damage_factor = {k: 0 for k in api["types"].keys()}
 
@@ -286,7 +285,7 @@ def resolve_damage_factor(method, type_1: str, type_2: str=None):
     return damage_factor
 
 
-def format_damage(method, type_1: str, type_2: str=None):
+def format_damage(method, type_1: str, type_2: str = None):
     """ Formats the effective, ineffective and no effect lists with type names
     based on the damage factor.
     """
@@ -310,7 +309,7 @@ def format_damage(method, type_1: str, type_2: str=None):
     return effective, ineffective, useless
 
 
-def format_specific_efficacy(method, type_1: str, type_2: str=None):
+def format_specific_efficacy(method, type_1: str, type_2: str = None):
     """ Format the efficacy string specifically for defense or attack. """
     effective, ineffective, useless = format_damage(method, type_1, type_2)
     type_name = format_type(type_1, type_2)
@@ -325,7 +324,7 @@ def format_specific_efficacy(method, type_1: str, type_2: str=None):
     return s
 
 
-def format_efficacy(type_1: str, type_2: str=None):
+def format_efficacy(type_1: str, type_2: str = None):
     """ Format an efficacy string so that we can use this function for
     multiple commands. """
     efficacy = format_specific_efficacy(attack_method, type_1, type_2)
@@ -334,13 +333,13 @@ def format_efficacy(type_1: str, type_2: str=None):
 
 
 @pokedex_.command(name="type", description="Show pokemon with the specified types. {}".format(types_str))
-async def filter_type(message: discord.Message, slot_1: str.lower, slot_2: str.lower=None):
+async def filter_type(message: discord.Message, slot_1: str.lower, slot_2: str.lower = None):
     matched_pokemon = []
-    assert_type(slot_1, message.server)
+    assert_type(slot_1, message.guild)
 
     # Find all pokemon with the matched criteria
     if slot_2:
-        assert_type(slot_2, message.server)
+        assert_type(slot_2, message.guild)
 
         # If two slots are provided, search for pokemon with both types matching
         for pokemon in pokedex.values():
@@ -360,8 +359,9 @@ async def filter_type(message: discord.Message, slot_1: str.lower, slot_2: str.l
 
 
 @pokedex_.command(aliases="e",
-                  description="Display type efficacy (effectiveness) of the specified type or pokemon. {}".format(types_str))
-async def effect(message: discord.Message, slot_1_or_pokemon: str.lower, slot_2: str.lower=None):
+                  description="Display type efficacy (effectiveness) of the specified type or pokemon. {}".format(
+                      types_str))
+async def effect(message: discord.Message, slot_1_or_pokemon: str.lower, slot_2: str.lower = None):
     name = get_pokemon(slot_1_or_pokemon, assert_on_error=False)
     formatted = ""
     if name:
@@ -373,36 +373,36 @@ async def effect(message: discord.Message, slot_1_or_pokemon: str.lower, slot_2:
     else:
         slot_1 = slot_1_or_pokemon
 
-    assert_type(slot_1, message.server)
+    assert_type(slot_1, message.guild)
     if slot_2:
-        assert_type(slot_2, message.server)
+        assert_type(slot_2, message.guild)
 
     formatted += format_efficacy(slot_1, slot_2)
     await client.say(message, formatted)
 
 
-@pokedex_.command(disabled_pm=True, aliases="sf", permissions="manage_server")
-async def scalefactor(message: discord.Message, factor: float=default_scale_factor):
-    """ Set the image scaling factor for your server. If no factor is given, the default is set. /
-    **This command requires the `Manage Server` permission.**"""
+@pokedex_.command(disabled_pm=True, aliases="sf", permissions="manage_guild")
+async def scalefactor(message: discord.Message, factor: float = default_scale_factor):
+    """ Set the image scaling factor for your guild. If no factor is given, the default is set. /
+    **This command requires the `Manage Guild` permission.**"""
     assert not factor == 0, "If you wish to disable images, remove the `Attach Files` permission from this bot."
 
     assert factor <= max_scale_factor, "The factor **{}** is too high **(max={})**.".format(factor, max_scale_factor)
     assert min_scale_factor <= factor, "The factor **{}** is too low **(min={})**.".format(factor, min_scale_factor)
 
-    if message.server.id not in pokedex_config.data:
-        pokedex_config.data[message.server.id] = {}
+    if message.guild.id not in pokedex_config.data:
+        pokedex_config.data[message.guild.id] = {}
 
     # Handle specific scenarios
     if factor == default_scale_factor:
-        if "scale-factor" in pokedex_config.data[message.server.id]:
-            del pokedex_config.data[message.server.id]["scale-factor"]
+        if "scale-factor" in pokedex_config.data[message.guild.id]:
+            del pokedex_config.data[message.guild.id]["scale-factor"]
             reply = "Pokédex image scale factor reset to default: **{factor}**."
         else:
             reply = "Pokédex image scale factor is **{factor}** (default)."
     else:
-        pokedex_config.data[message.server.id]["scale-factor"] = factor
+        pokedex_config.data[message.guild.id]["scale-factor"] = factor
         reply = "Pokédex image scale factor set to **{factor}**."
 
-    pokedex_config.save()
+    await pokedex_config.asyncsave()
     await client.say(message, reply.format(factor=factor))

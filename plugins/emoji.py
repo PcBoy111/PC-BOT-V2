@@ -6,7 +6,7 @@ difficult to install for windows.
 Commands:
     greater
 """
-
+import asyncio
 import os
 import random
 import re
@@ -18,8 +18,6 @@ from PIL import Image
 
 import plugins
 from pcbot import Annotate, utils
-
-import logging
 
 # See if we can create gifs using imageio
 try:
@@ -70,22 +68,21 @@ def get_emoji(char: str, size=default_size):
 
     emoji_bytes = emoji[char]
     emoji_bytes = set_svg_size(emoji_bytes, size)
-    
+
     return Image.open(BytesIO(cairosvg.svg2png(emoji_bytes)))
 
 
-async def get_emote(emote_id: str, server: discord.Server):
+async def get_emote(emote_id: int):
     """ Return the image of a custom emote. """
-    emote = discord.Emoji(id=emote_id, server=server)
 
     # Return the cached version if possible
-    if emote.id in emote_cache:
-        return Image.open(emote_cache[emote.id])
+    if emote_id in emote_cache:
+        return Image.open(emote_cache[emote_id])
 
     # Otherwise, download the emote, store it in the cache and return
-    url = emote.url.replace("discordapp.com/api/", "cdn.discordapp.com/")  # legacy discord.py gives old url format
-    emote_bytes = await utils.download_file(url, bytesio=True)
-    emote_cache[emote.id] = emote_bytes
+    # url = emote.url.replace("discordapp.com/api/", "cdn.discordapp.com/")  # legacy discord.py gives old url format
+    emote_bytes = await utils.download_file(f'https://cdn.discordapp.com/emojis/{emote_id}.png', bytesio=True)
+    emote_cache[emote_id] = emote_bytes
     return Image.open(emote_bytes)
 
 
@@ -128,7 +125,7 @@ def parse_emoji(chars: list):
             chars_remaining = length = len(chars)
 
 
-async def format_emoji(text: str, server: discord.Server):
+async def format_emoji(text: str):
     """ Creates a list supporting both emoji and custom emotes. """
     char_and_emotes = []
 
@@ -139,7 +136,7 @@ async def format_emoji(text: str, server: discord.Server):
     for i, c in text_iter:
         match = emote_regex.match(text[i:])
         if match:
-            char_and_emotes.append(await get_emote(match.group("id"), server))
+            char_and_emotes.append(await get_emote(int(match.group("id"))))
             has_custom = True
 
             # Skip ahead in the iterator
@@ -164,13 +161,13 @@ async def format_emoji(text: str, server: discord.Server):
     return [e if isinstance(e, Image.Image) else get_emoji(e, size=size) for e in parsed_emoji], has_custom
 
 
-async def convert_to_images(server: discord.Server, text: str):
+async def convert_to_images(text: str):
     """ Converts any emoji in the given text to a list of images.
 
     :return: images: list, total_width: int, height: int
     """
     # Parse all unicode and load the emojies
-    parsed_emoji, has_custom = await format_emoji(text, server)
+    parsed_emoji, has_custom = await format_emoji(text)
     assert parsed_emoji, "I couldn't find any emoji in that text of yours."
 
     # Combine multiple images if necessary, otherwise send just the one
@@ -200,10 +197,10 @@ async def convert_to_images(server: discord.Server, text: str):
 
 
 @plugins.command(aliases="huge bigger big larger large")
-async def greater(message: discord.Message, text: Annotate.CleanContent):
+async def greater(message: discord.Message, text: Annotate.Content):
     """ Gives a **huge** version of emojies. """
     # Parse all unicode and load the emojies
-    images, total_width, height = await convert_to_images(message.server, text)
+    images, total_width, height = await convert_to_images(text)
 
     # Stitch all the images together
     image = Image.new("RGBA", (total_width, height))
@@ -221,9 +218,9 @@ async def greater(message: discord.Message, text: Annotate.CleanContent):
 async def merge(message: discord.Message, text: Annotate.CleanContent):
     """ Randomly merge attributes from several emoji. Type 're' after the command to regenerate.  """
     contents = [str(emoji[char]) for char in parse_emoji(text)]
-    
+
     assert contents, "Only emojies are supported."
-    
+
     elements = []
     for svg in contents:
         elements.extend(svg_element_regex.findall(svg))
@@ -235,15 +232,22 @@ async def merge(message: discord.Message, text: Annotate.CleanContent):
         combined = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 36 36\">"
         combined += "".join(elements)
         combined += '</svg>'
-    
+
         combined_bytes = bytes(combined, encoding="utf-8")
         combined_bytes = set_svg_size(combined_bytes, 256)
 
         image_bytes = BytesIO(cairosvg.svg2png(combined_bytes))
 
         msg = await client.send_file(message.channel, image_bytes, filename="combined.png")
-        reply = await client.wait_for_message(timeout=60, channel=message.channel, author=message.author,
-                                              check=lambda m: m.content.lower() == "re" or m.content.startswith("!merge"))
+
+        def check(m):
+            return m.channel == message.channel and m.author == message.author and m.content.lower() == "re" or \
+                   m.content.startswith("!merge")
+
+        try:
+            reply = await client.wait_for("message", timeout=60, check=check)
+        except asyncio.TimeoutError:
+            reply = None
 
         # If the user types this command, stop waiting for the "re" keyword
         if not reply or reply.content.startswith("!merge"):
@@ -262,7 +266,7 @@ async def merge(message: discord.Message, text: Annotate.CleanContent):
 
 async def gif(message: discord.Message, text: Annotate.CleanContent):
     """ Gives a **huge** version of emojies AS A GIF. """
-    images, total_width, height = await convert_to_images(message.server, text)
+    images, total_width, height = await convert_to_images(text)
 
     # Get optional duration
     duration = 0.15

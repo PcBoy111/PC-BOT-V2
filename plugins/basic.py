@@ -7,20 +7,18 @@ Commands:
 
 import random
 from re import match
-from datetime import datetime, timedelta
 
 import discord
-
 from pcbot import utils, Config, Annotate
 import plugins
-client = plugins.client  # type: discord.Client
 
+client = plugins.client  # type: discord.Client
 
 feature_reqs = Config(filename="feature_requests", data={})
 
 
 @plugins.command()
-async def roll(message: discord.Message, num: utils.int_range(f=1)=100):
+async def roll(message: discord.Message, num: utils.int_range(f=1) = 100):
     """ Roll a number from 1-100 if no second argument or second argument is not a number.
         Alternatively rolls `num` times (minimum 1). """
     rolled = random.randint(1, num)
@@ -53,7 +51,7 @@ def dice_roll(arg: str):
 
 
 @plugins.command()
-async def dice(message: discord.Message, num_and_sides: dice_roll=(1, 6)):
+async def dice(message: discord.Message, num_and_sides: dice_roll = (1, 6)):
     """ Roll an n-dimensional dice 1 or more times. """
     rolls = []
     num, sides = num_and_sides
@@ -61,60 +59,18 @@ async def dice(message: discord.Message, num_and_sides: dice_roll=(1, 6)):
     for i in range(num):
         rolls.append(random.randint(1, sides))
 
-    await client.say(message, "**{0.display_name}** rolls `[{1}]`".format(message.author, ", ".join(str(r) for r in rolls)))
+    await client.say(message, "**{0.display_name}** rolls `[{1}]`".format(message.author, ", ".join(str(r)
+                                                                                                        for r in
+                                                                                                        rolls)))
 
 
 @plugins.command()
-async def avatar(message: discord.Message, member: discord.Member=Annotate.Self):
+async def avatar(message: discord.Message, member: discord.Member = Annotate.Self):
     """ Display your or another member's avatar. """
     e = discord.Embed(color=member.color)
-    e = e.set_image(url=member.avatar_url.replace(".webp", ".jpg"))
+    e = e.set_image(url=member.avatar_url_as(static_format="png"))
     e.set_author(name=member.display_name, icon_url=member.avatar_url)
     await client.send_message(message.channel, embed=e)
-
-
-@plugins.command(description="Finds messages mentioning you in the last 24 hours.", aliases="mentions", roles="Stupid")
-async def mentioned(message: discord.Message, member: discord.Member=Annotate.Self):
-    """ Looks for member mentions. The description is in the decorator solely to
-    correctly specify the type of member, so that PyCharm doesn't get cross.
-    :type message: discord.Message
-    :type member: discord.Member """
-    after = datetime.utcnow() - timedelta(hours=24)
-    was_found = False
-    await client.send_typing(message.channel)
-
-    # Go through all messages since 24 hours ago
-    async for mention_message in client.logs_from(message.channel, limit=5000, before=message, after=after):
-        if member not in mention_message.mentions:
-            continue
-
-        was_found = True
-
-        # Format the message when it's found, along with messages from prior 15 seconds and latter 15 seconds
-        after = mention_message.timestamp - timedelta(seconds=15)
-        message_content = []
-        async for nm in client.logs_from(message.channel, limit=50, after=after, before=after + timedelta(seconds=30)):
-            if nm.author == mention_message.author:
-                # Add an invisible separator and some spaces for an indent effect
-                message_content.append("\N{INVISIBLE SEPARATOR}" + " " * 4 + nm.clean_content)
-
-        found_message = await client.say(message, "**{0} - {1:%A, %d %B %Y %H:%M}**\n{2}".format(
-            mention_message.author.display_name, after, "\n".join(reversed(message_content))))
-
-        # The member will be able to search for another mention by typing next
-        next_message = await client.say(message, "Type `next` to expand your search.")
-        reply = await client.wait_for_message(timeout=30, author=member, channel=message.channel, content="next")
-
-        # Remove the previously sent help message and break if there was no response
-        if reply is None:
-            await client.delete_message(next_message)
-            break
-
-        await client.delete_messages([found_message, reply, next_message])
-        await client.send_typing(message.channel)
-    else:
-        await client.say(message, "{} mentioning you in the last 24 hours.".format(
-            "Found no more messages" if was_found else "Could not find a message"))
 
 
 @plugins.argument("#{open}feature_id{suffix}{close}")
@@ -145,7 +101,7 @@ def format_req(plugin, req_id: int):
     return None
 
 
-def feature_exists(plugin: str, req_id: str):
+def feature_exists(plugin: str, req_id: int):
     """ Returns True if a feature with the given id exists. """
     return 0 <= req_id < len(feature_reqs.data[plugin])
 
@@ -165,7 +121,7 @@ def plugin_in_req(plugin: str):
 
 
 @plugins.command()
-async def feature(message: discord.Message, plugin: plugin_in_req, req_id: get_req_id=None):
+async def feature(message: discord.Message, plugin: plugin_in_req, req_id: get_req_id = None):
     """ Handle plugin feature requests where plugin is a plugin name.
     See `{pre}plugin` for a list of plugins. """
     if req_id is not None:
@@ -193,7 +149,7 @@ async def new(message: discord.Message, plugin: plugin_in_req, content: Annotate
 
     # Add the feature request if an identical request does not exist
     feature_reqs.data[plugin].append(content)
-    feature_reqs.save()
+    await feature_reqs.asyncsave()
     await client.say(message, "Feature saved as `{0}` id **#{1}**.".format(plugin, len(req_list)))
 
 
@@ -209,11 +165,11 @@ async def mark(message: discord.Message, plugin: plugin_in_req, req_id: get_req_
     # Mark or unmark the feature request by adding or removing +++ from the end (slightly hacked)
     if not req.endswith("+++"):
         feature_reqs.data[plugin][req_id] += "+++"
-        feature_reqs.save()
+        await feature_reqs.asyncsave()
         await client.say(message, "Marked feature with `{}` id **#{}**.".format(plugin, req_id + 1))
     else:
         feature_reqs.data[plugin][req_id] = req[:-3]
-        feature_reqs.save()
+        await feature_reqs.asyncsave()
         await client.say(message, "Unmarked feature with `{}` id **#{}**.".format(plugin, req_id + 1))
 
 
@@ -226,5 +182,5 @@ async def remove(message: discord.Message, plugin: plugin_in_req, req_id: get_re
 
     # Remove the feature
     del feature_reqs.data[plugin][req_id]
-    feature_reqs.save()
+    await feature_reqs.asyncsave()
     await client.say(message, "Removed feature with `{}` id **#{}**.".format(plugin, req_id + 1))

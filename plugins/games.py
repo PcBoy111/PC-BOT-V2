@@ -14,8 +14,8 @@ import asyncio
 import discord
 
 import plugins
-client = plugins.client  # type: discord.Client
 
+client = plugins.client  # type: discord.Client
 
 # List containing all channels playing a game
 started = []
@@ -28,7 +28,7 @@ class Game:
     def __init__(self, message: discord.Message, num: int):
         self.message = message
         self.channel = message.channel
-        self.member = message.server.me
+        self.member = message.guild.me
 
         self.num = num if num >= self.minimum_participants else self.minimum_participants
         self.participants = []
@@ -42,20 +42,23 @@ class Game:
     async def get_participants(self):
         """ Wait for input and get all participants. """
         for i in range(self.num):
-            def check(m):
-                if m.content.lower().strip() == "i" and m.author not in self.participants:
-                    return True
 
-                return False
+            def check(m):
+                return m.channel == self.channel and m.content.lower().strip() == "i" and m.author not in self.participants
 
             # Wait with a timeout of 2 minutes and check each message with check(m)
-            reply = await client.wait_for_message(timeout=120, channel=self.channel, check=check)
+            try:
+                reply = await client.wait_for("message", timeout=120, check=check)
+            except asyncio.TimeoutError:
+                await client.say(self.message, "**The {} game failed to gather {} participants.**".format(
+                    self.name, self.num))
+                return
 
             if reply:  # A user replied with a valid check
                 asyncio.ensure_future(
                     client.say(self.message,
-                                    "{} has entered! `{}/{}`. Type `I` to join!".format(
-                                        reply.author.mention, i + 1, self.num))
+                                   "{} has entered! `{}/{}`. Type `I` to join!".format(
+                                       reply.author.mention, i + 1, self.num))
                 )
                 self.participants.append(reply.author)
 
@@ -113,8 +116,14 @@ class Roulette(Game):
                 self.channel,
                 "{} is up next! Say `go` whenever you are ready.".format(member.mention)
             )
-            reply = await client.wait_for_message(timeout=15, channel=self.channel, author=member,
-                                                            check=lambda m: "go" in m.content.lower())
+
+            def check(m):
+                return m.channel == self.channel and m.author == member and "go" in m.content.lower()
+
+            try:
+                reply = await client.wait_for("message", timeout=15, check=check)
+            except asyncio.TimeoutError:
+                reply = None
 
             hit = ":dash:"
 
@@ -169,19 +178,18 @@ class HotPotato(Game):
                 pass_to.append(choice(pass_from))
 
             if reply is not None:
-                await client.send_message(self.channel, "{} :bomb: got the bomb! Pass it to either {} or {}!".format(
-                        member.mention, pass_to[0].mention, pass_to[1].mention))
+                await client.send_message(self.channel,
+                                              "{} :bomb: got the bomb! Pass it to either {} or {}!".format(
+                                                  member.mention, pass_to[0].mention, pass_to[1].mention))
 
             def check(m):
-                if len(m.mentions) > 0:
-                    if m.mentions[0] in pass_to:
-                        return True
-
-                return False
+                return m.channel == self.channel and m.author == member and m.mentions[0] in pass_to
 
             wait = (self.time_remaining - notify) if (self.time_remaining >= notify) else self.time_remaining
-            reply = await client.wait_for_message(timeout=wait, channel=self.channel, author=member,
-                                                            check=check)
+            try:
+                reply = await client.wait_for("message", timeout=wait, check=check)
+            except asyncio.TimeoutError:
+                reply = None
 
             if reply:
                 member = reply.mentions[0]
@@ -250,8 +258,12 @@ class Typing(Game):
 
         # We'll wait for a message from all of our participants
         for i in range(len(self.participants)):
-            reply = await client.wait_for_message(timeout=timeout, channel=self.channel, check=self.is_participant)
-            if not reply:
+            def check(m):
+                return m.channel == self.channel and self.is_participant is True
+
+            try:
+                reply = await client.wait_for("message", timeout=timeout, check=check)
+            except asyncio.TimeoutError:
                 await client.send_message(self.channel, "**Time is up.**")
                 return
 
@@ -264,7 +276,7 @@ class Typing(Game):
 
             # Calculate the accuracy, wpm and send the message
             accuracy = self.calculate_accuracy(reply.clean_content)
-            wpm = self.calculate_wpm(time_elapsed)
+            wpm = self.calculate_wpm(int(time_elapsed))
             m = self.reply.format(member=reply.author, time=time_elapsed, wpm=wpm, accuracy=accuracy)
             asyncio.ensure_future(client.send_message(self.channel, m))
 
@@ -287,8 +299,8 @@ async def init_game(message: discord.Message, game, num: int):
     :param game: A Game object.
     :param num: The specified participants
     """
-    if num > message.server.member_count:
-        num = sum(1 for m in message.server.members if not m.bot and m.status is not discord.Status.offline)
+    if num > message.guild.member_count:
+        num = sum(1 for m in message.guild.members if not m.bot and m.status is not discord.Status.offline)
 
     # The channel should not be playing two games at once
     assert message.channel.id not in started, "**This channel is already playing.**"
@@ -299,19 +311,19 @@ async def init_game(message: discord.Message, game, num: int):
 
 
 @plugins.command(description=desc_template.format(game=Roulette))
-async def roulette(message: discord.Message, participants: int=6):
+async def roulette(message: discord.Message, participants: int = 6):
     """ The roulette command. Description is defined using a template. """
     await init_game(message, Roulette, participants)
 
 
 @plugins.command(description=desc_template.format(game=HotPotato))
-async def hotpotato(message: discord.Message, participants: int=4):
+async def hotpotato(message: discord.Message, participants: int = 4):
     """ The hotpotato command. Description is defined using a template. """
     await init_game(message, HotPotato, participants)
 
 
 @plugins.command(description=desc_template.format(game=Typing))
-async def typing(message: discord.Message, participants: int=2):
+async def typing(message: discord.Message, participants: int = 2):
     """ The typing command. Description is defined using a template. """
     await init_game(message, Typing, participants)
 

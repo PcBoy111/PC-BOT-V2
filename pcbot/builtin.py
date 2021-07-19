@@ -14,8 +14,8 @@ import asyncio
 
 from pcbot import utils, Config, Annotate, config
 import plugins
-client = plugins.client  # type: discord.Client
 
+client = plugins.client  # type: discord.Client
 
 sub = asyncio.subprocess
 lambdas = Config("lambdas", data={})
@@ -25,9 +25,9 @@ code_globals = {}
 
 
 @plugins.command(name="help", aliases="commands")
-async def help_(message: discord.Message, command: str.lower=None, *args):
+async def help_(message: discord.Message, command: str.lower = None, *args):
     """ Display commands or their usage and description. """
-    command_prefix = config.server_command_prefix(message.server)
+    command_prefix = config.guild_command_prefix(message.guild)
 
     # Display the specific command
     if command:
@@ -40,7 +40,7 @@ async def help_(message: discord.Message, command: str.lower=None, *args):
 
         # Get the specific command with arguments and send the help
         cmd = plugins.get_sub_command(cmd, *args)
-        await client.say(message, plugins.format_help(cmd, message.server))
+        await client.say(message, plugins.format_help(cmd, message.guild))
 
     # Display every command
     else:
@@ -54,7 +54,7 @@ async def help_(message: discord.Message, command: str.lower=None, *args):
             # Add all commands that the user can use
             for cmd in plugin.__commands:
                 if not cmd.hidden and plugins.can_use_command(cmd, message.author, message.channel):
-                    commands.append(cmd.name_prefix(message.server).split()[0])
+                    commands.append(cmd.name_prefix(message.guild).split()[0])
 
         commands = ", ".join(sorted(commands))
 
@@ -67,7 +67,7 @@ async def help_(message: discord.Message, command: str.lower=None, *args):
 @plugins.command(hidden=True)
 async def setowner(message: discord.Message):
     """ Set the bot owner. Only works in private messages. """
-    if not message.channel.is_private:
+    if not isinstance(message.channel, discord.abc.PrivateChannel):
         return
 
     assert not plugins.owner_cfg.data, "An owner is already set."
@@ -76,15 +76,22 @@ async def setowner(message: discord.Message):
     logging.critical("Owner code for assignment: {}".format(owner_code))
 
     await client.say(message,
-                     "A code has been printed in the console for you to repeat within 60 seconds.")
-    user_code = await client.wait_for_message(timeout=60, channel=message.channel, content=owner_code)
+                         "A code has been printed in the console for you to repeat within 60 seconds.")
 
-    assert user_code, "You failed to send the desired code."
+    def check(m):
+        return m.content == owner_code and m.channel == message.channel
+
+
+    try:
+        user_code = await client.wait_for("message", timeout=60, check=check)
+    except asyncio.TimeoutError:
+        await client.say(message, "You failed to send the desired code.")
+        return
 
     if user_code:
         await client.say(message, "You have been assigned bot owner.")
-        plugins.owner_cfg.data = message.author.id
-        plugins.owner_cfg.save()
+        plugins.owner_cfg.data = str(message.author.id)
+        await plugins.owner_cfg.asyncsave()
 
 
 @plugins.command(owner=True)
@@ -92,7 +99,7 @@ async def stop(message: discord.Message):
     """ Stops the bot. """
     await client.say(message, "\N{COLLISION SYMBOL}\N{PISTOL}")
     await plugins.save_plugins()
-    await client.logout()
+    await client.close()
 
 
 @plugins.command(owner=True)
@@ -114,16 +121,16 @@ async def reset(message: discord.Message):
 
 
 @plugins.command(owner=True)
-async def game(message: discord.Message, name: Annotate.Content=None):
+async def game(message: discord.Message, name: Annotate.Content = None):
     """ Stop playing or set game to `name`. """
-    await client.change_presence(game=discord.Game(name=name, type=0))
+    await client.change_presence(activity=discord.Game(name=name))
     await client.say(message, "**Set the game to** `{}`.".format(name) if name else "**No longer playing.**")
 
 
 @game.command(owner=True)
 async def stream(message: discord.Message, url: str, title: Annotate.Content):
     """ Start streaming a game. """
-    await client.change_presence(game=discord.Game(name=title, url=url, type=1))
+    await client.change_presence(activity=discord.Streaming(name=title, url=url))
     await client.say(message, "Started streaming **{}**.".format(title))
 
 
@@ -135,12 +142,12 @@ async def do_as(message: discord.Message, member: discord.Member, command: Annot
     await client.on_message(message)
 
 
-async def send_result(channel: discord.Channel, result, time_elapsed: timedelta):
+async def send_result(channel: discord.TextChannel, result, time_elapsed: timedelta):
     """ Sends eval results. """
     if type(result) is discord.Embed:
         await client.send_message(channel, embed=result)
     else:
-        embed = discord.Embed(color=channel.server.me.color, description="```py\n{}```".format(result))
+        embed = discord.Embed(color=channel.guild.me.color, description="```py\n{}```".format(result))
         embed.set_footer(text="Time elapsed: {:.3f}ms".format(time_elapsed.total_seconds() * 1000))
         await client.send_message(channel, embed=embed)
 
@@ -149,7 +156,7 @@ async def send_result(channel: discord.Channel, result, time_elapsed: timedelta)
 async def do(message: discord.Message, python_code: Annotate.Code):
     """ Execute python code. """
     code_globals.update(dict(message=message, client=client,
-                             author=message.author, server=message.server, channel=message.channel))
+                             author=message.author, guild=message.guild, channel=message.channel))
 
     # Create an async function so that we can await it using the result of eval
     python_code = "async def do_session():\n    " + "\n    ".join(line for line in python_code.split("\n"))
@@ -175,7 +182,7 @@ async def eval_(message: discord.Message, python_code: Annotate.Code):
     line that returns something. Coroutine generators will by awaited.
     """
     code_globals.update(dict(message=message, client=client,
-                             author=message.author, server=message.server, channel=message.channel))
+                             author=message.author, guild=message.guild, channel=message.channel))
 
     before = datetime.now()
     try:
@@ -258,14 +265,14 @@ async def lambda_(message: discord.Message):
     **Owner command unless no argument is specified.**
     """
     await client.say(message,
-                     "**Lambdas:** ```\n" "{}```".format(", ".join(sorted(lambdas.data.keys()))))
+                         "**Lambdas:** ```\n" "{}```".format(", ".join(sorted(lambdas.data.keys()))))
 
 
 @lambda_.command(aliases="a", owner=True)
 async def add(message: discord.Message, trigger: str, python_code: Annotate.Code):
     """ Add a command that runs the specified python code. """
     lambdas.data[trigger] = python_code
-    lambdas.save()
+    await lambdas.asyncsave()
     await client.say(message, "Command `{}` set.".format(trigger))
 
 
@@ -276,7 +283,7 @@ async def remove(message: discord.Message, trigger: str):
 
     # The command specified exists and we remove it
     del lambdas.data[trigger]
-    lambdas.save()
+    await lambdas.asyncsave()
     await client.say(message, "Command `{}` removed.".format(trigger))
 
 
@@ -286,7 +293,7 @@ async def enable(message: discord.Message, trigger: str):
     # If the specified trigger is in the blacklist, we remove it
     if trigger in lambda_config.data["blacklist"]:
         lambda_config.data["blacklist"].remove(trigger)
-        lambda_config.save()
+        await lambda_config.asyncsave()
         await client.say(message, "Command `{}` enabled.".format(trigger))
     else:
         assert trigger in lambdas.data, "Command `{}` does not exist.".format(trigger)
@@ -301,7 +308,7 @@ async def disable(message: discord.Message, trigger: str):
     # If the specified trigger is not in the blacklist, we add it
     if trigger not in lambda_config.data["blacklist"]:
         lambda_config.data["blacklist"].append(trigger)
-        lambda_config.save()
+        await lambda_config.asyncsave()
         await client.say(message, "Command `{}` disabled.".format(trigger))
     else:
         assert trigger in lambdas.data, "Command `{}` does not exist.".format(trigger)
@@ -310,7 +317,7 @@ async def disable(message: discord.Message, trigger: str):
         await client.say(message, "Command `{}` is already disabled.".format(trigger))
 
 
-def import_module(module: str, attr: str=None):
+def import_module(module: str, attr: str = None):
     """ Remotely import a module or attribute from module into code_globals. """
     # The name of the module in globals
     # If attr starts with :, it defines a new name for the module as whatever follows the colon
@@ -340,7 +347,7 @@ def import_module(module: str, attr: str=None):
 
 
 @lambda_.command(name="import", owner=True)
-async def import_(message: discord.Message, module: str, attr: str=None):
+async def import_(message: discord.Message, module: str, attr: str = None):
     """ Import the specified module. Specifying `attr` will act like `from attr import module`.
 
     If the given attribute starts with a colon :, the name for the module will be defined as
@@ -356,7 +363,7 @@ async def import_(message: discord.Message, module: str, attr: str=None):
     else:
         # There were no errors when importing, so we add the name to our startup imports
         lambda_config.data["imports"].append((module, attr))
-        lambda_config.save()
+        await lambda_config.asyncsave()
         await client.say(message, "Imported and setup `{}` for import.".format(name))
 
 
@@ -379,7 +386,7 @@ async def ping(message: discord.Message):
 
     # Edit our message with the tracked time (in ms)
     time_elapsed = (stop_time - start_time).microseconds / 1000
-    await client.edit_message(first_message, "Pong! `{elapsed:.4f}ms`".format(elapsed=time_elapsed))
+    await first_message.edit(content="Pong! `{elapsed:.4f}ms`".format(elapsed=time_elapsed))
 
 
 async def get_changelog(num: int):
@@ -416,46 +423,49 @@ async def bot_hub(message: discord.Message):
     app_info = await client.application_info()
 
     await client.say(message, "**{ver}** - **{name}** ```elm\n"
-                              "Owner   : {owner}\n"
-                              "Up      : {up} UTC\n"
-                              "Servers : {servers}```"
-                              "{desc}".format(
+                                  "Owner   : {owner}\n"
+                                  "Up      : {up} UTC\n"
+                                  "Guilds  : {guilds}```"
+                                  "{desc}".format(
         ver=config.version, name=app_info.name,
         repo="https://github.com/{}".format(config.github_repo),
         owner=str(app_info.owner),
         up=client.time_started.strftime("%d-%m-%Y %H:%M:%S"),
-        servers=len(client.servers),
+        guilds=len(client.guilds),
         desc=app_info.description.replace("\\n", "\n")
     ))
 
 
 @bot_hub.command(name="changelog")
-async def changelog_(message: discord.Message, num: utils.int_range(f=1)=3):
+async def changelog_(message: discord.Message, num: utils.int_range(f=1) = 3):
     """ Get `num` requests from the changelog. Defaults to 3. """
     await client.say(message, await get_changelog(num))
 
 
 @bot_hub.command(name="prefix", permissions="administrator", disabled_pm=True)
-async def set_prefix(message: discord.Message, prefix: str=None):
+async def set_prefix(message: discord.Message, prefix: str = None):
     """ Set the bot prefix. **The prefix is case sensitive and may not include spaces.** """
-    config.set_server_config(message.server, "command_prefix", utils.split(prefix)[0] if prefix else None)
+    await config.set_guild_config(message.guild, "command_prefix", utils.split(prefix)[0] if prefix else None)
 
     pre = config.default_command_prefix if prefix is None else prefix
-    await client.say(message, "Set the server prefix to `{}`.".format(pre))
+    await client.say(message, "Set the guild prefix to `{}`.".format(pre))
 
 
 @bot_hub.command(name="case", permissions="administrator", disabled_pm=True)
 async def set_case_sensitivity(message: discord.Message, value: plugins.true_or_false):
     """ Enable or disable case sensitivity in command triggers. """
-    config.set_server_config(message.server, "case_sensitive_commands", value)
-    await client.say(message, "**{}** case sensitive command triggers in this server. ".format("Enabled" if value else "Disabled"))
+    await config.set_guild_config(message.guild, "case_sensitive_commands", value)
+    await client.say(message, "**{}** case sensitive command triggers in this guild. ".format(
+        "Enabled" if value else "Disabled"))
 
 
 def init():
     """ Import any imports for lambdas. """
+
     # Add essential globals for "do", "eval" and "lambda" commands
     class Plugin:
         """ Class for returning plugins easily by using attributes. """
+
         def __getattr__(self, item):
             return plugins.get_plugin(item)
 
@@ -502,7 +512,7 @@ async def on_message(message: discord.Message):
                 return default
 
         code_globals.update(dict(arg=arg, args=args, message=message, client=client,
-                                 author=message.author, server=message.server, channel=message.channel))
+                                 author=message.author, guild=message.guild, channel=message.channel))
         python_code = lambdas.data[args[0]]
 
         # Create an async function so that we can await it using the result of eval

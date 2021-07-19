@@ -5,7 +5,7 @@ set a new best also post that. It also includes many osu! features, such
 as a signature generator, pp calculation and user map updates.
 
 TUTORIAL:
-    A member with Manage Server permission must first assign one or more channels
+    A member with Manage Guild permission must first assign one or more channels
     that the bot should post scores or map updates in.
     See: !help osu config
 
@@ -35,15 +35,14 @@ from datetime import datetime, timedelta
 from enum import Enum
 from typing import List
 
-import aiohttp 
+import aiohttp
 import asyncio
 import discord
+
 import plugins
 from pcbot import Config, utils, Annotate
 from plugins.osulib import api, Mods, calculate_pp, can_calc_pp, ClosestPPStats
 from plugins.twitchlib import twitch
-
-import json
 
 client = plugins.client  # type: discord.Client
 
@@ -59,9 +58,9 @@ osu_config = Config("osu", pretty=True, data=dict(
     map_event_repeat_interval=6,  # The time in hours before a map event will be treated as "new"
     profiles={},  # Profile setup as member_id: osu_id
     mode={},  # Member's game mode as member_id: gamemode_value
-    server={},  # Server specific info for score- and map notification channels
+    guild={},  # Guild specific info for score- and map notification channels
     update_mode={},  # Member's notification update mode as member_id: UpdateModes.name
-    primary_server={},  # Member's primary server; defines where they should be mentioned: member_id: server_id
+    primary_guild={},  # Member's primary guild; defines where they should be mentioned: member_id: guild_id
     map_cache={},  # Cache for map events, primarily used for calculating and caching pp of the difficulties
 ))
 
@@ -91,16 +90,17 @@ timestamp_pattern = re.compile(r"(\d+:\d+:\d+\s(\([0-9,]+\))?\s*)-")
 
 class MapEvent:
     """ Store userpage map events so that we don't send multiple updates. """
+
     def __init__(self, text):
         self.text = text
-        
+
         self.time_created = datetime.utcnow()
         self.count = 1
         self.messages = []
 
     def __repr__(self):
         return "MapEvent(text={}, time_created={}, count={})".format(self.text, self.time_created.ctime(), self.count)
-    
+
     def __str__(self):
         return repr(self)
 
@@ -123,7 +123,7 @@ class UpdateModes(Enum):
         return None
 
 
-def calculate_acc(mode: api.GameMode, score: dict, exclude_misses: bool=False):
+def calculate_acc(mode: api.GameMode, score: dict, exclude_misses: bool = False):
     """ Calculate the accuracy using formulas from https://osu.ppy.sh/wiki/Accuracy """
     # Parse data from the score: 50s, 100s, 300s, misses, katu and geki
     keys = ("count300", "count100", "count50", "countmiss", "countkatu", "countgeki")
@@ -151,19 +151,22 @@ def calculate_acc(mode: api.GameMode, score: dict, exclude_misses: bool=False):
     return total_points_of_hits / (total_number_of_hits * 300)
 
 
-def format_user_diff(mode: api.GameMode, pp: float, rank: int, country_rank: int, accuracy: float, iso: str, data: dict):
+def format_user_diff(mode: api.GameMode, pp: float, rank: int, country_rank: int, accuracy: float, iso: str,
+                     data: dict):
     """ Get a bunch of differences and return a formatted string to send.
     iso is the country code. """
     pp_rank = int(data["pp_rank"])
     pp_country_rank = int(data["pp_country_rank"])
-    
+
     # Find the performance page number of the respective ranks
 
     formatted = "\u2139`{} {:.2f}pp {:+.2f}pp`".format(mode.name.replace("Standard", "osu!"), float(data["pp_raw"]), pp)
     formatted += (" [\U0001f30d]({}?page={})`#{:,}{}`".format(rankings_url, pp_rank // 50 + 1, pp_rank,
-                                                "" if int(rank) == 0 else " {:+}".format(int(rank))))
-    formatted += (" [{}]({}?country={}&page={})`#{:,}{}`".format(utils.text_to_emoji(iso), rankings_url, iso, pp_country_rank // 50 + 1, pp_country_rank,
-                                        "" if int(country_rank) == 0 else " {:+}".format(int(country_rank))))
+                                                              "" if int(rank) == 0 else " {:+}".format(int(rank))))
+    formatted += (" [{}]({}?country={}&page={})`#{:,}{}`".format(utils.text_to_emoji(iso), rankings_url, iso,
+                                                                 pp_country_rank // 50 + 1, pp_country_rank,
+                                                                 "" if int(country_rank) == 0 else " {:+}".format(
+                                                                     int(country_rank))))
     rounded_acc = round(accuracy, 3)
     if rounded_acc > 0:
         formatted += " \U0001f4c8"  # Graph with upwards trend
@@ -183,7 +186,7 @@ def format_user_diff(mode: api.GameMode, pp: float, rank: int, country_rank: int
 
 async def format_stream(member: discord.Member, score: dict, beatmap: dict):
     """ Format the stream url and a VOD button when possible. """
-    stream_url = getattr(member.game, "url", None)
+    stream_url = getattr(member.activity, "url", None)
     if not stream_url:
         return ""
 
@@ -195,7 +198,8 @@ async def format_stream(member: discord.Member, score: dict, beatmap: dict):
     # Try getting the vod information of the current stream
     try:
         twitch_id = await twitch.get_id(member)
-        vod_request = await twitch.request("channels/{}/videos".format(twitch_id), limit=1, broadcast_type="archive", sort="time")
+        vod_request = await twitch.request("channels/{}/videos".format(twitch_id), limit=1, broadcast_type="archive",
+                                           sort="time")
         assert vod_request["_total"] >= 1
     except:
         logging.error(traceback.format_exc())
@@ -224,7 +228,8 @@ async def format_stream(member: discord.Member, score: dict, beatmap: dict):
     return text
 
 
-async def format_new_score(mode: api.GameMode, score: dict, beatmap: dict, rank: int=None, member: discord.Member=None):
+async def format_new_score(mode: api.GameMode, score: dict, beatmap: dict, rank: int = None,
+                           member: discord.Member = None):
     """ Format any score. There should be a member name/mention in front of this string. """
     acc = calculate_acc(mode, score)
     return (
@@ -278,9 +283,9 @@ def updates_per_log():
     return logging_interval // (update_interval / 60)
 
 
-def get_primary_server(member_id: str):
-    """ Return the primary server for a member or None. """
-    return osu_config.data["primary_server"].get(member_id, None)
+def get_primary_guild(member_id: str):
+    """ Return the primary guild for a member or None. """
+    return osu_config.data["primary_guild"].get(member_id, None)
 
 
 def get_mode(member_id: str):
@@ -313,7 +318,8 @@ def get_user_url(member_id: str):
 def is_playing(member: discord.Member):
     """ Check if a member has "osu!" in their Game name. """
     # See if the member is playing
-    return getattr(member.game, "name", None) and ("osu" in member.game.name.lower() or rank_regex.search(member.game.name))
+    return getattr(member.activity, "name", None) and (
+            "osu" in member.activity.name.lower() or rank_regex.search(member.activity.name))
 
 
 async def update_user_data():
@@ -324,30 +330,35 @@ async def update_user_data():
     # for their previous and latest user data
     for member_id, profile in osu_config.data["profiles"].items():
         # Skip members who disabled tracking
-        if get_update_mode(member_id) is UpdateModes.Disabled:
+        if get_update_mode(str(member_id)) is UpdateModes.Disabled:
             continue
 
-        member = discord.utils.get(client.get_all_members(), id=member_id)
+        member = discord.utils.get(client.get_all_members(), id=int(member_id))
         if member is None:
             continue
-     
+
         # Add the member to tracking
         if member_id not in osu_tracking:
             osu_tracking[member_id] = dict(member=member, ticks=-1)
 
-        osu_tracking[member_id]["ticks"] += 1
+        osu_tracking[str(member_id)]["ticks"] += 1
 
         # Only update members not tracked ingame every nth update
-        if not is_playing(member) and osu_tracking[member_id]["ticks"] % not_playing_skip > 0:
+        if not is_playing(member) and osu_tracking[str(member_id)]["ticks"] % not_playing_skip > 0:
             # Update their old data to match their new one in order to avoid duplicate posts
-            if "new" in osu_tracking[member_id]:
-                osu_tracking[member_id]["old"] = osu_tracking[member_id]["new"]
+            if "new" in osu_tracking[str(member_id)]:
+                osu_tracking[str(member_id)]["old"] = osu_tracking[str(member_id)]["new"]
             continue
-        
+
         # Get the user data for the player
-        mode = get_mode(member_id).value
+        mode = get_mode(str(member_id)).value
         try:
-            user_data = await api.get_user(u=profile, type="id", m=mode)
+            params = {
+                "u": profile,
+                "m": mode,
+                "type": "id"
+            }
+            user_data = await api.get_user(**params)
         except aiohttp.ServerDisconnectedError:
             continue
         except asyncio.TimeoutError:
@@ -363,16 +374,22 @@ async def update_user_data():
             continue
 
         # User is already tracked
-        if "new" in osu_tracking[member_id]:
+        if "new" in osu_tracking[str(member_id)]:
             # Move the "new" data into the "old" data of this user
-            osu_tracking[member_id]["old"] = osu_tracking[member_id]["new"]
+            osu_tracking[str(member_id)]["old"] = osu_tracking[str(member_id)]["new"]
         else:
             # If this is the first time, update the user's list of scores for later
-            osu_tracking[member_id]["scores"] = await api.get_user_best(u=profile, type="id", limit=score_request_limit, m=mode)
+            params = {
+                "u": profile,
+                "m": mode,
+                "limit": score_request_limit,
+                "type": "id"
+            }
+            osu_tracking[str(member_id)]["scores"] = await api.get_user_best(**params)
 
         # Update the "new" data
-        osu_tracking[member_id]["new"] = user_data
-        osu_tracking[member_id]["new"]["ripple"] = True if api.ripple_pattern.match(profile) else False
+        osu_tracking[str(member_id)]["new"] = user_data
+        osu_tracking[str(member_id)]["new"]["ripple"] = True if api.ripple_pattern.match(profile) else False
 
 
 async def get_new_score(member_id: str):
@@ -381,15 +398,22 @@ async def get_new_score(member_id: str):
     player's top plays can be retrieved with score["pos"]. """
     # Download a list of the user's scores
     profile = osu_config.data["profiles"][member_id]
-    user_scores = await api.get_user_best(u=profile, type="id", limit=score_request_limit, m=get_mode(member_id).value,
-                                          request_tries=3)
+    params = {
+        "u": profile,
+        "m": get_mode(member_id).value,
+        "limit": score_request_limit,
+        "request_tries": 3,
+        "type": "id",
+    }
+    user_scores = await api.get_user_best(**params)
 
     # Compare the scores from top to bottom and try to find a new one
     for i, score in enumerate(user_scores):
         if score not in osu_tracking[member_id]["scores"]:
             if i == 0:
                 logging.info(f"a #1 score was set: check plugins.osu.osu_tracking['{member_id}']['debug']")
-                osu_tracking[member_id]["debug"] = dict(scores=user_scores, old=dict(osu_tracking[member_id]["old"]), new=dict(osu_tracking[member_id]["new"]))
+                osu_tracking[member_id]["debug"] = dict(scores=user_scores, old=dict(osu_tracking[member_id]["old"]),
+                                                        new=dict(osu_tracking[member_id]["new"]))
             osu_tracking[member_id]["scores"] = user_scores
 
             # Calculate the difference in pp from the score below
@@ -398,7 +422,6 @@ async def get_new_score(member_id: str):
                 diff = pp - float(user_scores[i + 1]["pp"])
             else:
                 diff = 0
-
             return dict(score, pos=i + 1, diff=diff)
     else:
         return None
@@ -409,24 +432,24 @@ def get_diff(old, new, value):
     return float(new[value]) - float(old[value])
 
 
-def get_notify_channels(server: discord.Server, data_type: str):
-    """ Find the notifying channel or return the server. """
-    if server.id not in osu_config.data["server"]:
+def get_notify_channels(guild: discord.Guild, data_type: str):
+    """ Find the notifying channel or return the guild. """
+    if str(guild.id) not in osu_config.data["guild"]:
         return None
 
-    if data_type + "-channels" not in osu_config.data["server"][server.id]:
+    if data_type + "-channels" not in osu_config.data["guild"][str(guild.id)]:
         return None
 
-    return [server.get_channel(s) for s in osu_config.data["server"][server.id][data_type + "-channels"]
-            if server.get_channel(s)]
+    return [guild.get_channel(int(s)) for s in osu_config.data["guild"][str(guild.id)][data_type + "-channels"]
+            if guild.get_channel(int(s))]
 
 
-async def get_potential_pp(score, beatmap, member: discord.Member, score_pp: float, use_acc: bool=False):
+async def get_potential_pp(score, beatmap, member: discord.Member, score_pp: float, use_acc: bool = False):
     """ Returns the potential pp or None if it shouldn't display """
     potential_pp = None
 
     # Find the potentially gained pp in standard when not FC
-    if get_mode(member.id) is api.GameMode.Standard and get_update_mode(member.id) is not UpdateModes.PP \
+    if get_mode(str(member.id)) is api.GameMode.Standard and get_update_mode(str(member.id)) is not UpdateModes.PP \
             and int(score["maxcombo"]) < int(beatmap["max_combo"]):
         options = ["+" + Mods.format_mods(int(score["enabled_mods"]))]
 
@@ -455,13 +478,13 @@ async def get_potential_pp(score, beatmap, member: discord.Member, score_pp: flo
 
 def get_score_name(member: discord.Member, username: str, ripple=False):
     """ Formats the username and link for scores."""
-    user_url = get_user_url(member.id)
+    user_url = get_user_url(str(member.id))
     return "{member.mention} [`{ripple}{name}`]({url})".format(member=member, name=username, url=user_url,
                                                                ripple="ripple: " if ripple else "")
 
 
-def get_formatted_score_embed(member: discord.Member, score: dict, formatted_score: str, potential_pp: float=None):
-    embed = discord.Embed(color=member.color, url=get_user_url(member.id))
+def get_formatted_score_embed(member: discord.Member, score: dict, formatted_score: str, potential_pp: float = None):
+    embed = discord.Embed(color=member.color, url=get_user_url(str(member.id)))
     embed.description = formatted_score
 
     # Add potential pp in the footer
@@ -505,14 +528,22 @@ async def notify_pp(member_id: str, data: dict):
 
     # If a new score was found, format the score
     if score:
-        beatmap = (await api.get_beatmaps(b=int(score["beatmap_id"]), m=mode.value, a=1, request_tries=3))[0]
+        params = {
+            "b": int(score["beatmap_id"]),
+            "m": mode.value,
+            "limit": score_request_limit,
+            "request_tries": 3,
+            "a": 1
+        }
+        beatmap = (await api.get_beatmaps(**params))[0]
 
         # There might not be any events
         scoreboard_rank = None
         if new["events"]:
-            scoreboard_rank = api.rank_from_events(new["events"], score["beatmap_id"])
+            scoreboard_rank = api.rank_from_events(new["events"], str(score["beatmap_id"]))
 
         potential_pp = await get_potential_pp(score, beatmap, member, float(score["pp"]))
+
 
         if update_mode is UpdateModes.Minimal:
             m += await format_minimal_score(mode, score, beatmap, scoreboard_rank, member) + "\n"
@@ -522,15 +553,15 @@ async def notify_pp(member_id: str, data: dict):
     # Always add the difference in pp along with the ranks
     m += format_user_diff(mode, pp_diff, rank_diff, country_rank_diff, accuracy_diff, old["country"], new)
 
-    # Send the message to all servers
-    for server in client.servers:
-        member = server.get_member(member_id)
-        channels = get_notify_channels(server, "score")
+    # Send the message to all guilds
+    for guild in client.guilds:
+        member = guild.get_member(int(member_id))
+        channels = get_notify_channels(guild, "score")
         if not member or not channels:
             continue
 
-        primary_server = get_primary_server(member.id)
-        is_primary = True if primary_server is None else (True if primary_server == server.id else False)
+        primary_guild = get_primary_guild(str(member.id))
+        is_primary = True if primary_guild is None else (True if primary_guild == str(guild.id) else False)
 
         # Format the url and the username
         name = get_score_name(member, new["username"], "ripple" in data)
@@ -538,7 +569,9 @@ async def notify_pp(member_id: str, data: dict):
 
         # The top line of the format will differ depending on whether we found a score or not
         if score:
-            embed.description = "**{0} set a new best `(#{pos}/{1} +{diff:.2f}pp)` on**\n".format(name, score_request_limit, **score) + m
+            embed.description = "**{0} set a new best `(#{pos}/{1} +{diff:.2f}pp)` on**\n".format(name,
+                                                                                                  score_request_limit,
+                                                                                                  **score) + m
         else:
             embed.description = name + "\n" + m
 
@@ -546,8 +579,8 @@ async def notify_pp(member_id: str, data: dict):
             try:
                 await client.send_message(channel, embed=embed)
 
-                # In the primary server and if the user sets a score, send a mention and delete it
-                # This will only mention in the first channel of the server
+                # In the primary guild and if the user sets a score, send a mention and delete it
+                # This will only mention in the first channel of the guild
                 if use_mentions_in_scores and score and i == 0 and is_primary:
                     mention = await client.send_message(channel, member.mention)
                     await client.delete_message(mention)
@@ -585,14 +618,15 @@ def format_beatmapset_diffs(beatmapset: list):
 def format_map_status(member: discord.Member, status_format: str, beatmapset: list, minimal: bool):
     """ Format the status update of a beatmap. """
     set_id = beatmapset[0]["beatmapset_id"]
-    user_id = osu_config.data["profiles"][member.id]
+    user_id = osu_config.data["profiles"][str(member.id)]
 
     status = status_format.format(name=member.display_name, user_id=user_id, host=host, **beatmapset[0])
     if not minimal:
         status += format_beatmapset_diffs(beatmapset)
 
     embed = discord.Embed(color=member.color, description=status)
-    embed.set_thumbnail(url="https://b.ppy.sh/thumb/{}.jpg?date={}".format(set_id, datetime.now().ctime().replace(" ", "%20")))
+    embed.set_thumbnail(
+        url="https://b.ppy.sh/thumb/{}.jpg?date={}".format(set_id, datetime.now().ctime().replace(" ", "%20")))
     return embed
 
 
@@ -636,7 +670,7 @@ async def calculate_pp_for_beatmapset(beatmapset: list):
             "pp": pp_stats.pp,
         }
 
-    osu_config.save()
+    await osu_config.asyncsave()
 
 
 async def notify_maps(member_id: str, data: dict):
@@ -692,7 +726,10 @@ async def notify_maps(member_id: str, data: dict):
         # Try returning the beatmap info 6 times with a span of a minute
         # This might be needed when new maps are submitted
         for _ in range(6):
-            beatmapset = await api.get_beatmaps(s=event["beatmapset_id"])
+            params = {
+                "s": event["beatmapset_id"],
+            }
+            beatmapset = await api.get_beatmaps(**params)
             if beatmapset:
                 break
             await asyncio.sleep(60)
@@ -709,7 +746,7 @@ async def notify_maps(member_id: str, data: dict):
         new_event = MapEvent(html)
         prev = discord.utils.get(recent_map_events, text=html)
         to_delete = []
-        
+
         if prev:
             recent_map_events.remove(prev)
 
@@ -717,14 +754,14 @@ async def notify_maps(member_id: str, data: dict):
                 to_delete = prev.messages
                 new_event.count = prev.count + 1
                 new_event.time_created = prev.time_created
-        
+
         # Always append the new event to the recent list
         recent_map_events.append(new_event)
 
-        # Send the message to all servers
-        for server in client.servers:
-            member = server.get_member(member_id)
-            channels = get_notify_channels(server, "map")  # type: list
+        # Send the message to all guilds
+        for guild in client.guilds:
+            member = guild.get_member(int(member_id))
+            channels = get_notify_channels(guild, "map")  # type: list
 
             if not member or not channels:
                 continue
@@ -736,7 +773,7 @@ async def notify_maps(member_id: str, data: dict):
                 if new_event.count > 1:
                     embed.set_footer(text="updated {} times since".format(new_event.count))
                     embed.timestamp = new_event.time_created
-                
+
                 # Delete the previous message if there is one
                 if to_delete:
                     delete_msg = discord.utils.get(to_delete, channel=channel)
@@ -761,26 +798,28 @@ async def on_ready():
 
     while not client.loop.is_closed():
         try:
-            await asyncio.sleep(update_interval, loop=client.loop)
+            await asyncio.sleep(float(update_interval), loop=client.loop)
             started = datetime.now()
 
             # First, update every user's data
             await update_user_data()
 
             # Next, check for any differences in pp between the "old" and the "new" subsections
-            # and notify any servers
+            # and notify any guilds
             # NOTE: This used to also be ensure_future before adding the potential pp check.
             # The reason for this change is to ensure downloading and running the .osu files won't happen twice
             # at the same time, which would cause problems retrieving the correct potential pp.
             for member_id, data in osu_tracking.items():
-                await notify_pp(member_id, data)
+                await notify_pp(str(member_id), data)
 
             # Check for any differences in the users' events and post about map updates
             # NOTE: the same applies to this now. These can't be concurrent as they also calculate pp.
             for member_id, data in osu_tracking.items():
-                await notify_maps(member_id, data)
+                await notify_maps(str(member_id), data)
         except aiohttp.ClientOSError as e:
             logging.error(str(e))
+        except asyncio.CancelledError:
+            return
         except:
             logging.error(traceback.format_exc())
         finally:
@@ -822,46 +861,63 @@ async def on_message(message):
 
     timestamps = ["{} {}".format(stamp, url) for stamp, url in get_timestamps_with_url(message.content)]
     if timestamps:
-        await client.send_message(message.channel, 
-                embed=discord.Embed(color=message.author.color, description="\n".join(timestamps)))
+        await client.send_message(message.channel,
+                                  embed=discord.Embed(color=message.author.color,
+                                                      description="\n".join(timestamps)))
         return True
 
 
-
 @plugins.command(aliases="circlesimulator eba")
-async def osu(message: discord.Message, member: discord.Member=Annotate.Self,
-              mode: api.GameMode.get_mode=None):
+async def osu(message: discord.Message, member: discord.Member = Annotate.Self,
+              mode: api.GameMode.get_mode = None):
     """ Handle osu! commands.
 
     When your user is linked, this plugin will check if you are playing osu!
     (your profile would have `playing osu!`), and send updates whenever you set a
     new top score. """
     # Make sure the member is assigned
-    assert member.id in osu_config.data["profiles"], "No osu! profile assigned to **{}**! Please assign a profile using !osu link".format(member.name)
+    assert str(member.id) in osu_config.data[
+        "profiles"], "No osu! profile assigned to **{}**! Please assign a profile using !osu link".format(member.name)
 
-    user_id = osu_config.data["profiles"][member.id]
-    mode = get_mode(member.id) if mode is None else mode
+    user_id = osu_config.data["profiles"][str(member.id)]
+    mode = get_mode(str(member.id)) if mode is None else mode
 
     # Set the signature color to that of the role color
     color = "pink" if member.color == discord.Color.default() \
-        else "#{0:02x}{1:02x}{2:02x}".format(*member.color.to_tuple())
+        else "#{0:02x}{1:02x}{2:02x}".format(*member.color.to_rgb())
 
     # Calculate whether the header color should be black or white depending on the background color.
     # Stupidly, the API doesn't accept True/False. It only looks for the &darkheaders keyword.
     # The silly trick done here is extracting either the darkheader param or nothing.
-    r, g, b = member.color.to_tuple()
-    dark = dict(darkheader=True) if (r * 0.299 + g * 0.587 + b * 0.144) > 186 else {}
+    r, g, b = member.color.to_rgb()
+    dark = dict(darkheader="True") if (r * 0.299 + g * 0.587 + b * 0.144) > 186 else {}
 
     # Download and upload the signature
-    signature = await utils.retrieve_page("https://lemmmy.pw/osusig/sig.php", head=True, colour=color,
-                                          uname=user_id, pp=True, countryrank=True, xpbar=True,
-                                          mode=mode.value, date=datetime.now().ctime(), **dark)
+    params = {
+        "head": "True",
+        "colour": color,
+        "uname": user_id,
+        "pp": "True",
+        "countryrank": "True",
+        "xpbar": "True",
+        "mode": mode.value,
+        "date": datetime.now().ctime()
+    }
+    signature = await utils.retrieve_page("https://lemmmy.pw/osusig/sig.php", **params, **dark)
     if api.ripple_pattern.match(user_id):
-            signature = await utils.retrieve_page("https://sig.ripple.moe/sig.php", head=True, colour=color,
-                                          uname=user_id[7:], pp=True, countryrank=True, xpbar=True,
-                                          mode=mode.value, date=datetime.now().ctime(), **dark)
+        params = {
+            "head": "True",
+            "colour": color,
+            "uname": user_id[7:],
+            "pp": "True",
+            "countryrank": "True",
+            "xpbar": "True",
+            "mode": mode.value,
+            "date": datetime.now().ctime()
+        }
+        signature = await utils.retrieve_page("https://sig.ripple.moe/sig.php", **params, **dark)
     embed = discord.Embed(color=member.color)
-    embed.set_author(name=member.display_name, icon_url=member.avatar_url, url=get_user_url(member.id))
+    embed.set_author(name=member.display_name, icon_url=member.avatar_url, url=get_user_url(str(member.id)))
     embed.set_image(url=signature.url)
     await client.send_message(message.channel, embed=embed)
 
@@ -879,7 +935,10 @@ async def link(message: discord.Message, name: Annotate.LowerContent):
 
     If you're using ripple, type ripple:<name>. """
     mode = api.GameMode.Standard
-    osu_user = await api.get_user(u=name)
+    params = {
+        "u": name,
+    }
+    osu_user = await api.get_user(**params)
 
     # Check if the osu! user exists
     assert osu_user, "osu! user `{}` does not exist.".format(name)
@@ -888,10 +947,17 @@ async def link(message: discord.Message, name: Annotate.LowerContent):
     # Make sure the user has more pp than the minimum limit defined in config
     if float(osu_user["pp_raw"]) < minimum_pp_required:
         # Perhaps the user wants to display another gamemode
-        await client.say(message, "**You have less than the required {}pp.\nIf you're not an osu!standard player, please "
-                                  "enter your gamemode below. Valid gamemodes are `{}`.**".format(minimum_pp_required, gamemodes))
-        reply = await client.wait_for_message(timeout=60, author=message.author, channel=message.channel)
-        if not reply:
+        await client.say(message,
+                         "**You have less than the required {}pp.\nIf you're not an osu!standard player, please "
+                         "enter your gamemode below. Valid gamemodes are `{}`.**".format(minimum_pp_required,
+                                                                                         gamemodes))
+
+        def check(m):
+            return m.author == message.author and m.channel == message.channel
+
+        try:
+            reply = await client.wait_for("message", timeout=60, check=check)
+        except asyncio.TimeoutError:
             return
 
         mode = api.GameMode.get_mode(reply.content)
@@ -900,8 +966,8 @@ async def link(message: discord.Message, name: Annotate.LowerContent):
             "**Your pp in {} is less than the required {}pp.**".format(mode.name, minimum_pp_required)
 
     # Clear the scores when changing user
-    if message.author.id in osu_tracking:
-        del osu_tracking[message.author.id]
+    if str(message.author.id) in osu_tracking:
+        del osu_tracking[str(message.author.id)]
 
     # Convert their user_id to a ripple id
     user_id = osu_user["user_id"]
@@ -909,15 +975,15 @@ async def link(message: discord.Message, name: Annotate.LowerContent):
         user_id = "ripple:" + user_id
 
     # Assign the user using their unique user_id
-    osu_config.data["profiles"][message.author.id] = user_id
-    osu_config.data["mode"][message.author.id] = mode.value
-    osu_config.data["primary_server"][message.author.id] = message.server.id
-    osu_config.save()
+    osu_config.data["profiles"][str(message.author.id)] = user_id
+    osu_config.data["mode"][str(message.author.id)] = mode.value
+    osu_config.data["primary_guild"][str(message.author.id)] = str(message.guild.id)
+    await osu_config.asyncsave()
     await client.say(message, "Set your osu! profile to `{}`.".format(osu_user["username"]))
 
 
 @osu.command(aliases="unset")
-async def unlink(message: discord.Message, member: discord.Member=Annotate.Self):
+async def unlink(message: discord.Message, member: discord.Member = Annotate.Self):
     """ Unlink your osu! account or unlink the member specified (**Owner only**). """
     # The message author is allowed to unlink himself
     # If a member is specified and the member is not the owner, set member to the author
@@ -925,11 +991,11 @@ async def unlink(message: discord.Message, member: discord.Member=Annotate.Self)
         member = message.author
 
     # The member might not be linked to any profile
-    assert member.id in osu_config.data["profiles"], "No osu! profile assigned to **{}**!".format(member.name)
+    assert str(member.id) in osu_config.data["profiles"], "No osu! profile assigned to **{}**!".format(member.name)
 
     # Unlink the given member (usually the message author)
-    del osu_config.data["profiles"][member.id]
-    osu_config.save()
+    del osu_config.data["profiles"][str(member.id)]
+    await osu_config.asyncsave()
     await client.say(message, "Unlinked **{}'s** osu! profile.".format(member.name))
 
 
@@ -938,38 +1004,38 @@ async def gamemode(message: discord.Message, mode: api.GameMode.get_mode):
     """ Sets the command executor's gamemode.
 
     Gamemodes are: `{modes}`. """
-    assert message.author.id in osu_config.data["profiles"], \
+    assert str(message.author.id) in osu_config.data["profiles"], \
         "No osu! profile assigned to **{}**!".format(message.author.name)
 
-    user_id = osu_config.data["profiles"][message.author.id]
+    user_id = osu_config.data["profiles"][str(message.author.id)]
     assert await has_enough_pp(u=user_id, m=mode.value, type="id"), \
         "**Your pp in {} is less than the required {}pp.**".format(mode.name, minimum_pp_required)
 
-    osu_config.data["mode"][message.author.id] = mode.value
-    osu_config.save()
+    osu_config.data["mode"][str(message.author.id)] = mode.value
+    await osu_config.asyncsave()
 
     # Clear the scores when changing mode
-    if message.author.id in osu_tracking:
-        del osu_tracking[message.author.id]
+    if str(message.author.id) in osu_tracking:
+        del osu_tracking[str(message.author.id)]
 
     await client.say(message, "Set your gamemode to **{}**.".format(mode.name))
 
 
 @osu.command()
-async def info(message: discord.Message, member: discord.Member=Annotate.Self):
+async def info(message: discord.Message, member: discord.Member = Annotate.Self):
     """ Display configuration info. """
     # Make sure the member is assigned
-    assert member.id in osu_config.data["profiles"], "No osu! profile assigned to **{}**!".format(member.name)
+    assert str(member.id) in osu_config.data["profiles"], "No osu! profile assigned to **{}**!".format(member.name)
 
-    user_id = osu_config.data["profiles"][member.id]
-    mode = get_mode(member.id)
-    update_mode = get_update_mode(member.id)
+    user_id = osu_config.data["profiles"][str(member.id)]
+    mode = get_mode(str(member.id))
+    update_mode = get_update_mode(str(member.id))
 
     e = discord.Embed(color=member.color)
     e.set_author(name=member.display_name, icon_url=member.avatar_url, url=host + "u/" + user_id)
     e.add_field(name="Game Mode", value=mode.name)
     e.add_field(name="Notification Mode", value=update_mode.name)
-    e.add_field(name="Playing osu!", value="YES" if member.id in osu_tracking.keys() else "NO")
+    e.add_field(name="Playing osu!", value="YES" if str(member.id) in osu_tracking.keys() else "NO")
 
     await client.send_message(message.channel, embed=e)
 
@@ -983,29 +1049,29 @@ async def notify(message: discord.Message, mode: UpdateModes.get_mode):
     how much text is in each update, or if you want to disable them completely.
 
     Update modes are: `{modes}`. """
-    assert message.author.id in osu_config.data["profiles"], \
+    assert str(message.author.id) in osu_config.data["profiles"], \
         "No osu! profile assigned to **{}**!".format(message.author.name)
 
-    osu_config.data["update_mode"][message.author.id] = mode.name
-    osu_config.save()
+    osu_config.data["update_mode"][str(message.author.id)] = mode.name
+    await osu_config.asyncsave()
 
     # Clear the scores when disabling mode
-    if message.author.id in osu_tracking and mode == UpdateModes.Disabled:
-        del osu_tracking[message.author.id]
+    if str(message.author.id) in osu_tracking and mode == UpdateModes.Disabled:
+        del osu_tracking[str(message.author.id)]
 
     await client.say(message, "Set your update notification mode to **{}**.".format(mode.name.lower()))
 
 
 @osu.command()
-async def url(message: discord.Message, member: discord.Member=Annotate.Self,
-              section: str.lower=None):
+async def url(message: discord.Message, member: discord.Member = Annotate.Self,
+              section: str.lower = None):
     """ Display the member's osu! profile URL. """
     # Member might not be registered
-    assert member.id in osu_config.data["profiles"], "No osu! profile assigned to **{}**!".format(member.name)
+    assert str(member.id) in osu_config.data["profiles"], "No osu! profile assigned to **{}**!".format(member.name)
 
     # Send the URL since the member is registered
     await client.say(message, "**{0.display_name}'s profile:** <{1}{2}>".format(
-        member, get_user_url(member.id), "#_{}".format(section) if section else ""))
+        member, get_user_url(str(member.id)), "#_{}".format(section) if section else ""))
 
 
 async def pp_(message: discord.Message, beatmap_url: str, *options):
@@ -1030,13 +1096,15 @@ async def pp_(message: discord.Message, beatmap_url: str, *options):
     if type(pp_stats) is ClosestPPStats:
         # Remove any accuracy percentage from options as we're setting this manually, and remove unused options
         for opt in options:
-            if opt.endswith("%") or opt.endswith("pp") or opt.endswith("x300") or opt.endswith("x100") or opt.endswith("x50"):
+            if opt.endswith("%") or opt.endswith("pp") or opt.endswith("x300") or opt.endswith("x100") or opt.endswith(
+                    "x50"):
                 options.remove(opt)
 
         options.insert(0, "{}%".format(pp_stats.acc))
 
-    await client.say(message, "*{artist} - {title}* **[{version}] {0}** {stars:.02f}\u2605 would be worth `{pp:,.02f}pp`.".format(
-        " ".join(options), **pp_stats._asdict()))
+    await client.say(message,
+                     "*{artist} - {title}* **[{version}] {0}** {stars:.02f}\u2605 would be worth `{pp:,.02f}pp`.".format(
+                         " ".join(options), **pp_stats._asdict()))
 
 
 if can_calc_pp:
@@ -1056,24 +1124,35 @@ async def create_score_embed_with_pp(member: discord.Member, score, beatmap, mod
     score["pp"] = round(score_pp.pp, 2)
 
     embed = get_formatted_score_embed(member, score, await format_new_score(mode, score, beatmap), potential_pp)
-    embed.set_author(name=member.display_name, icon_url=member.avatar_url, url=get_user_url(member.id))
+    embed.set_author(name=member.display_name, icon_url=member.avatar_url, url=get_user_url(str(member.id)))
     return embed
 
 
-
-async def recent(message: discord.Message, member: Annotate.Member=Annotate.Self):
+async def recent(message: discord.Message, member: Annotate.Member = Annotate.Self):
     """ Display your or another member's most recent score. """
-    assert member.id in osu_config.data["profiles"], \
+    assert str(member.id) in osu_config.data["profiles"], \
         "No osu! profile assigned to **{}**!".format(member.name)
 
-    user_id = osu_config.data["profiles"][member.id]
-    mode = get_mode(member.id)
+    user_id = osu_config.data["profiles"][str(member.id)]
+    mode = get_mode(str(member.id))
 
-    scores = await api.get_user_recent(u=user_id, m=mode, limit=1)
+    params = {
+        "u": user_id,
+        "m": mode.value,
+        "limit": 1
+    }
+
+    scores = await api.get_user_recent(**params)
     assert scores, "Found no recent score."
 
     score = scores[0]
-    beatmap = (await api.get_beatmaps(b=int(score["beatmap_id"]), m=mode.value, a=1, request_tries=3))[0]
+    params = {
+        "b": int(score["beatmap_id"]),
+        "m": mode.value,
+        "a": 1,
+        "request_tries": 3
+    }
+    beatmap = (await api.get_beatmaps(**params))[0]
 
     embed = await create_score_embed_with_pp(member, score, beatmap, mode)
     await client.send_message(message.channel, embed=embed)
@@ -1085,21 +1164,28 @@ osu.command(aliases="last new")(recent)
 
 async def score(message: discord.Message, beatmap_url: str):
     """ You scored. """
-    assert message.author.id in osu_config.data["profiles"], \
+    assert str(message.author.id) in osu_config.data["profiles"], \
         "No osu! profile assigned to **{}**!".format(message.author.name)
-    
-    user_id = osu_config.data["profiles"][message.author.id]
-    mode = get_mode(message.author.id)
+
+    user_id = osu_config.data["profiles"][str(message.author.id)]
+    mode = get_mode(str(message.author.id))
 
     try:
         beatmap_info = api.parse_beatmap_url(beatmap_url)
     except SyntaxError as e:
         await client.say(message, e)
         return
-    
+
     assert beatmap_info.beatmap_id, "Please link to a specific difficulty"
 
-    scores = await api.get_scores(b=beatmap_info.beatmap_id, u=user_id, m=mode.value, type="id", limit=1)
+    params = {
+        "b": beatmap_info.beatmap_id,
+        "m": mode.value,
+        "type": "id",
+        "limit": 1,
+        "u": user_id
+    }
+    scores = await api.get_scores(**params)
     assert len(scores) > 0, "Found no scores by **{}**.".format(message.author.name)
 
     score = scores[0]
@@ -1107,7 +1193,12 @@ async def score(message: discord.Message, beatmap_url: str):
     # Add the beatmap_id as it is not provided by the get_scores API endpoint
     score["beatmap_id"] = beatmap_info.beatmap_id
 
-    beatmap = (await api.get_beatmaps(b=beatmap_info.beatmap_id, m=mode.value, limit=1))[0]
+    params = {
+        "b": beatmap_info.beatmap_id,
+        "m": mode.value,
+        "limit": 1,
+    }
+    beatmap = (await api.get_beatmaps(**params))[0]
 
     embed = await create_score_embed_with_pp(message.author, score, beatmap, mode)
     await client.send_message(message.channel, embed=embed)
@@ -1130,10 +1221,10 @@ async def mapinfo(message: discord.Message, beatmap_url: str):
     await client.say(message, header + format_beatmapset_diffs(beatmapset))
 
 
-def init_server_config(server: discord.Server):
+def init_guild_config(guild: discord.Guild):
     """ Initializes the config when it's not already set. """
-    if server.id not in osu_config.data["server"]:
-        osu_config.data["server"][server.id] = {}
+    if str(guild.id) not in osu_config.data["guild"]:
+        osu_config.data["guild"][str(guild.id)] = {}
         osu_config.save()
 
 
@@ -1143,22 +1234,22 @@ async def config(message, _: utils.placeholder):
     pass
 
 
-@config.command(alias="score", permissions="manage_server")
-async def scores(message: discord.Message, *channels: discord.Channel):
+@config.command(alias="score", permissions="manage_guild")
+async def scores(message: discord.Message, *channels: discord.TextChannel):
     """ Set which channels to post scores to. """
-    init_server_config(message.server)
-    osu_config.data["server"][message.server.id]["score-channels"] = list(c.id for c in channels)
-    osu_config.save()
+    init_guild_config(message.guild)
+    osu_config.data["guild"][str(message.guild.id)]["score-channels"] = list(str(c.id) for c in channels)
+    await osu_config.asyncsave()
     await client.say(message, "**Notifying scores in**: {}".format(
         utils.format_objects(*channels, sep=" ") or "no channels"))
 
 
-@config.command(alias="map", permissions="manage_server")
-async def maps(message: discord.Message, *channels: discord.Channel):
+@config.command(alias="map", permissions="manage_guild")
+async def maps(message: discord.Message, *channels: discord.TextChannel):
     """ Set which channels to post map updates to. """
-    init_server_config(message.server)
-    osu_config.data["server"][message.server.id]["map-channels"] = list(c.id for c in channels)
-    osu_config.save()
+    init_guild_config(message.guild)
+    osu_config.data["guild"][str(message.guild.id)]["map-channels"] = list(c.id for c in channels)
+    await osu_config.asyncsave()
     await client.say(message, "**Notifying map updates in**: {}".format(
         utils.format_objects(*channels, sep=" ") or "no channels"))
 

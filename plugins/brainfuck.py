@@ -1,11 +1,12 @@
 """ Plugin for compiling and executing brainfuck code. """
+import asyncio
 
 import discord
 
 import plugins
 from pcbot import Annotate, Config
-client = plugins.client  # type: discord.Client
 
+client = plugins.client  # type: discord.Client
 
 cfg = Config("brainfuck", data={})  # Keys are names and values are dict with author, code
 max_iterations = 2 ** 17
@@ -87,7 +88,7 @@ def find_loop_end(code: str, start: int):
     raise SyntaxError("{}: Loop never ends!".format(start))
 
 
-def run_brainfuck(code: str, for_input: str=""):
+def run_brainfuck(code: str, for_input: str = ""):
     pointer = Pointer()
     input_pointer = Pointer()
     input_pointer.array[:len(for_input)] = list(ord(c) for c in for_input)
@@ -138,7 +139,7 @@ def run_brainfuck(code: str, for_input: str=""):
             raise TooManyIterations("Program exceeded maximum number of iterations ({})".format(max_iterations))
 
 
-async def brainfuck_in_channel(channel: discord.Channel, code, program_input):
+async def brainfuck_in_channel(channel: discord.TextChannel, code, program_input):
     try:
         output = run_brainfuck(code, program_input)
     except Exception as e:
@@ -158,8 +159,15 @@ async def brainfuck(message: discord.Message, code: Annotate.Code):
     program_input = ""
     if "," in code:
         await client.say(message, "**Input required, please type:**")
-        reply = await client.wait_for_message(timeout=30, author=message.author, channel=message.channel)
-        assert reply, "**You failed to reply.**"
+
+        def check(m):
+            return m.author == message.author and m.channel == message.channel
+
+        try:
+            reply = await client.wait_for("message", timeout=30, check=check)
+        except asyncio.TimeoutError:
+            await client.say(message, "**You failed to reply.**")
+            return
 
         program_input = reply.clean_content
 
@@ -184,12 +192,12 @@ def assert_exists(name: str):
 def assert_author(name: str, member: discord.Member):
     """ Make sure that whoever is modifying a brainfuck entry
     is the author of said entry. """
-    author = discord.utils.get(client.get_all_members(), id=cfg.data[name]["author"])
-    assert author == member, "You are not the author of this entry. **({})**".format(author or "Unknown author")
+    author = cfg.data[name]["author"]
+    assert author == str(member.id), "You are not the author of this entry. **({})**".format(author or "Unknown author")
 
 
 @brainfuck.command(aliases="exec do load")
-async def run(message: discord.Message, name: snippet_name, args: Annotate.CleanContent=""):
+async def run(message: discord.Message, name: snippet_name, args: Annotate.CleanContent = ""):
     """ Run an entry of brainfuck code. Explore entries with `{pre}brainfuck list`."""
     assert_exists(name)
 
@@ -203,8 +211,8 @@ async def add(message: discord.Message, name: snippet_name, code: Annotate.Code)
     with `{pre}brainfuck run`."""
     assert name not in cfg.data, "Entry `{}` already exists.".format(name)
 
-    cfg.data[name] = dict(author=message.author.id, code=code)
-    cfg.save()
+    cfg.data[name] = dict(author=str(str(message.author.id)), code=code)
+    await cfg.asyncsave()
     await client.say(message, "Entry `{}` created.".format(name))
 
 
@@ -216,7 +224,7 @@ async def append(message: discord.Message, name: snippet_name, code: Annotate.Co
     assert_author(name, message.author)
 
     cfg.data[name]["code"] += code
-    cfg.save()
+    await cfg.asyncsave()
     await client.say(message, "The given code was appended to `{}`.".format(name))
 
 
@@ -227,7 +235,7 @@ async def remove(message: discord.Message, name: snippet_name):
     assert_author(name, message.author)
 
     del cfg.data[name]
-    cfg.save()
+    await cfg.asyncsave()
     await client.say(message, "Removed entry with name `{}`.".format(name))
 
 

@@ -4,12 +4,11 @@ Commands:
 alias
 """
 import discord
-import asyncio
 
 from pcbot import Config, Annotate, config, utils
 import plugins
-client = plugins.client  # type: discord.Client
 
+client = plugins.client  # type: discord.Client
 
 alias_desc = \
     "Assign an alias command, where trigger is the command in it's entirety: `{pre}cmd` or `>cmd` or `cmd`.\n" \
@@ -29,29 +28,29 @@ async def alias(message: discord.Message, *options: str.lower, trigger: str, tex
     case_sensitive = "-case-sensitive" in options
     delete_message = not anywhere and "-delete-message" in options
 
-    if message.author.id not in aliases.data:
-        aliases.data[message.author.id] = {}
+    if str(message.author.id) not in aliases.data:
+        aliases.data[str(message.author.id)] = {}
 
     # Set options
-    aliases.data[message.author.id][trigger if case_sensitive else trigger.lower()] = dict(
+    aliases.data[str(message.author.id)][trigger if case_sensitive else trigger.lower()] = dict(
         text=text,
         anywhere=anywhere,
         case_sensitive=case_sensitive,
         delete_message=delete_message
     )
-    aliases.save()
+    await aliases.asyncsave()
 
     m = "**Alias assigned.** Type `{}`{} to trigger the alias."
     await client.say(message, m.format(trigger, " anywhere in a message" if anywhere else ""))
 
 
 @alias.command(name="list")
-async def list_aliases(message: discord.Message, member: discord.Member=Annotate.Self):
+async def list_aliases(message: discord.Message, member: discord.Member = Annotate.Self):
     """ List all user's aliases. """
-    assert message.author.id in aliases.data, "**{} has no aliases.**".format(member.display_name)
+    assert str(message.author.id) in aliases.data, "**{} has no aliases.**".format(member.display_name)
 
     # The user is registered so they must have aliases and we display them
-    format_aliases = ", ".join(aliases.data[member.id].keys())
+    format_aliases = ", ".join(aliases.data[str(member.id)].keys())
     await client.say(message, "**Aliases for {}:**```\n{}```\n".format(member.display_name, format_aliases))
 
 
@@ -59,17 +58,17 @@ async def list_aliases(message: discord.Message, member: discord.Member=Annotate
 async def remove(message: discord.Message, trigger: Annotate.Content):
     """ Remove user alias with the specified trigger. Use `*` to delete all. """
     if trigger == "*":
-        aliases.data[message.author.id] = {}
-        aliases.save()
+        aliases.data[str(message.author.id)] = {}
+        await aliases.asyncsave()
         await client.say(message, "**Removed all aliases.**")
 
     # Check if the trigger is in the would be list (basically checks if trigger is in [] if user is not registered)
-    assert trigger in aliases.data.get(message.author.id, []), \
-        "**Alias `{}` has never been set. Check `{}`.**".format(trigger, list_aliases.cmd.name_prefix(message.server))
+    assert trigger in aliases.data.get(str(message.author.id), []), \
+        "**Alias `{}` has never been set. Check `{}`.**".format(trigger, list_aliases.cmd.name_prefix(message.guild))
 
     # Trigger is an assigned alias, remove it
-    aliases.data[message.author.id].pop(trigger)
-    aliases.save()
+    aliases.data[str(message.author.id)].pop(trigger)
+    await aliases.asyncsave()
     await client.say(message, "**Alias `{}` removed.**".format(trigger, message.author))
 
 
@@ -78,8 +77,8 @@ async def on_message(message: discord.Message):
     success = False
 
     # User alias check
-    if message.author.id in aliases.data:
-        user_aliases = aliases.data[message.author.id]
+    if str(message.author.id) in aliases.data:
+        user_aliases = aliases.data[str(message.author.id)]
 
         # Check any aliases
         for name, command in user_aliases.items():
@@ -99,11 +98,11 @@ async def on_message(message: discord.Message):
 
             if execute:
                 if command.get("delete_message", False):
-                    if message.server.me.permissions_in(message.channel).manage_messages:
+                    if message.guild.me.permissions_in(message.channel).manage_messages:
                         client.loop.create_task(client.delete_message(message))
 
                 text = command["text"]
-                pre = config.server_command_prefix(message.server)
+                pre = config.guild_command_prefix(message.guild)
 
                 # Execute the command if it is one
                 if text.startswith(pre):

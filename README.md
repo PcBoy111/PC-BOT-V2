@@ -2,40 +2,38 @@
 
 [![Documentation Status](https://readthedocs.org/projects/pcbot/badge/?version=latest)](http://pcbot.readthedocs.io/en/latest/?badge=latest)
 
-WIP discord bot using [discord.py].
+WIP discord bot using [discord.py](https://github.com/Rapptz/discord.py).
 
-**PCBOT is only supported by python version 3.5.0 and newer.**
+**PCBOT is only supported by python version 3.6.0 and newer.**
 
 ## BotéMon
 **For those who have arrived from BotéMon and wish to contribute/have 
 a look/access the resources**, the libraries used are found in 
-`plugins/pokedex.py` and `plugins/pokedexlib/`!
+[`plugins/pokedex.py`](plugins/pokedex.py) and [`plugins/pokedexlib/`](plugins/pokedexlib)!
 
 Currently, BotéMon is the only version of PCBOT I host for public use. 
 **If you wish to add the bot to your server, check 
-[its bots.discord.pw entry!][botemon]**
-
-[botemon]: https://bots.discord.pw/bots/203868728884985857
+[its bots.discord.pw entry!](https://bots.discord.pw/bots/203868728884985857)**
 
 ## Installing
 Before installing the bot, you must make sure you're running python 
-3.5.0+
+3.6.0+
 
 ```
 $ python -V
-Python 3.5.2
+Python 3.6.0
 ```
 
-The next step is installing the correct version of [discord.py]:
+The next step is installing [discord.py](https://github.com/Rapptz/discord.py) with voice support:
 
 ```
-python -m pip install discord.py==0.16.12
+python -m pip install "discord.py[voice]"
 ```
 
 To install the bot, one can clone the repo:
 
 ```
-git clone https://github.com/PcBoy111/PCBOT.git
+git clone --recursive https://github.com/pckv/pcbot.git
 ```
 
 This is the best way to install as the bot is actively in development. 
@@ -43,7 +41,7 @@ If you want to update the bot using git, run `git pull` and either
 restart the bot or reload the updated plugins.
 
 If you do not care about updates, you can 
-[download the repo as ZIP][zip].
+[download the repo as ZIP](https://github.com/pckv/pcbot/archive/master.zip).
 
 Several plugins require additional modules. These modules are not 
 required unless you want a specific plugin to work. Some features and 
@@ -53,16 +51,12 @@ errors when modules are missing, although modules as of now are:
 | Module    | Notes                                                     |
 | --------- | --------------------------------------------------------- |
 | Pillow    | `pip install Pillow`                                      |
-| pendulum  | `pip install pendulum`, might also need `pytz`            |
+| pendulum  | `pip install pendulum==1.0.2`, might also need `pytz`     |
 | cairosvg  | `pip install cairosvg`, only supported for Linux          |
-| oppai-ng  | `pip install oppai`, used for pp calculation in osu       |
-| ffmpeg    | Not a python module; see doc in [`plugins/music.py`]      |
-| imageio   | `pip install imageio`, support gif in [`plugins/image.py`]|
-
-[zip]: https://github.com/PcBoy111/PCBOT/archive/master.zip
-[`plugins/osu.py`]: https://github.com/PcBoy111/PCBOT/blob/master/plugins/osu.py
-[`plugins/music.py`]: https://github.com/PcBoy111/PCBOT/blob/master/plugins/music.py
-[`plugins/image.py`]: https://github.com/PcBoy111/PCBOT/blob/master/plugins/image.py
+| aiofiles  | `pip install aiofiles`, support async file operations in [`config.py`](pcbot/config.py)          |
+| oppai-ng  | `pip install oppai`, used for pp calculation in [`pp.py`](plugins/osulib/pp.py) |
+| ffmpeg    | Not a python module; see doc in [`music.py`](plugins/music.py)      |
+| imageio   | `pip install imageio`, support gif in [`image.py`](plugins/image.py)|
 
 ## Running
 Running the bot is simple. Go to the root directory 
@@ -80,29 +74,19 @@ You should get a prompt asking for your bot token. One can also use the
 python bot.py -t TOKEN
 ```
 
-If you want to login to a regular account, use the --email / -e 
-argument like so:
-
-```
-python bot.py -e EMAIL
-```
-
-The bot will prompt for a password the first time you login with an 
-email. 
-
 For more command-line arguments, execute `python bot.py -h`.
 
 ## Configuration
 ### Changing the command prefix
 The command prefix is **bot specific**, which means that servers can't
 set a custom command prefix. To change the bot prefix, head over to 
-`config/bot-meta.json`. The prefix can be any number of characters.
+[`config/bot-meta.json`](config/bot_meta.json). The prefix can be any number of characters.
 
 ### The info command
 PCBOT has a dedicated info command, by default `!pcbot`, which 
 displays info such as the name, owner, uptime, servers and the bot 
 application description. To change the name of the command to suit 
-your bot name, change the "name" key in `config/bot-meta.json`. This 
+your bot name, change the "name" key in [`config/bot-meta.json`](config/bot_meta.json). This 
 name should avoid any non-alphanumeric characters, although you are
 free to include spaces in the name. 
 
@@ -129,20 +113,16 @@ your account will be registered as the bot owner.
 
 ### Plugins
 PCBOT has a folder based plugin system. If you wish to make a plugin, 
-check out [`pcbot/builtin.py`]. There are more features than showcased 
+check out [`pcbot/builtin.py`](pcbot/builtin.py). There are more features than showcased 
 in the builtin plugin, however there is no documentation for them yet.
 
 **To remove an unwanted plugin from the bot**, simply remove it from 
-the `plugins/` folder. You are also free to remove any accompanying 
+the [`plugins/`](plugins) folder. You are also free to remove any accompanying 
 library folder. Keep in mind **they will be re-added** when updating 
 the bot using git.
 
 The owner can manage plugins with the `!plugin` command. See
 `!help plugin` for more information.
-
-[`pcbot/builtin.py`]: https://github.com/PcBoy111/PCBOT/blob/master/pcbot/builtin.py
-
-[discord.py]: https://github.com/Rapptz/discord.py
 
 ## Licence
 The MIT License (MIT)

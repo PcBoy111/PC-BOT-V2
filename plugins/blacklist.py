@@ -1,22 +1,19 @@
-""" Plugin for blacklisting words. 
+""" Plugin for blacklisting words.
 
     Docs: http://pcbot.readthedocs.io/en/latest/blacklist.html
 """
-
 
 import logging
 import re
 from collections import namedtuple
 
 import discord
-
 import plugins
 from pcbot import Config
 
 client = plugins.client  # type: discord.Client
 
-
-blacklist = Config("blacklist", data={"enabled": False, "global": {}, "server": [], "channel": []}, pretty=True)
+blacklist = Config("blacklist", data={"enabled": False, "global": {}, "guild": [], "channel": []}, pretty=True)
 
 blacklist_config_fieldnames = [
     "match_patterns",
@@ -34,8 +31,8 @@ blacklist_cache = {}
 
 
 def make_config_object(data: dict):
-    """ Return a BlacklistConfig from the given dict. 
-    
+    """ Return a BlacklistConfig from the given dict.
+
     :param data: dict with blacklist config data.
     :return: BlacklistConfig
     """
@@ -48,32 +45,32 @@ def make_config_object(data: dict):
     return BlacklistConfig(**data)
 
 
-def update_data(data: dict, section: str, object_id: str=None):
+def update_data(data: dict, section: str, object_id: str = None):
     """ Overrides any valid keys with the keys in data.
-    
+
     Data is modified in place and is not returned.
-    
+
     :param data: The eventual BlacklistConfig data object.
-    :param section: channel, server or global
-    :param object_id: The id of the channel or server the message was sent from.
+    :param section: channel, guild or global
+    :param object_id: The id of the channel or guild the message was sent from.
     """
 
-    for server_data in ([blacklist.data["global"]] if section == "global" else blacklist.data[section]):
+    for guild_data in ([blacklist.data["global"]] if section == "global" else blacklist.data[section]):
         # Since this could also be the global config, only check for id when it's not
         if object_id:
-            # The server id is required, skip if not found and issue an error
-            if "id" not in server_data:
+            # The guild id is required, skip if not found and issue an error
+            if "id" not in guild_data:
                 logging.error("Missing id key under the \"{}\" section of blacklist.json".format(section))
                 continue
 
-            # If the server is found, append all valid keys
-            if not server_data["id"] == object_id:
+            # If the guild is found, append all valid keys
+            if not guild_data["id"] == object_id:
                 continue
 
-        override = server_data.get("override", False)
-        case_sensitive = server_data.get("case_sensitive", False)
+        override = guild_data.get("override", False)
+        case_sensitive = guild_data.get("case_sensitive", False)
 
-        for key, local_data in server_data.items():
+        for key, local_data in guild_data.items():
             # Remove invalid keys with a warning (unless they're one of the special field names)
             if key not in blacklist_config_fieldnames:
                 logging.warning("Invalid key name in blacklist.json: " + key)
@@ -99,44 +96,44 @@ def update_data(data: dict, section: str, object_id: str=None):
 
 
 def complete_config(message: discord.Message):
-    """ Return the correct config info using the given message object. 
-    
+    """ Return the correct config info using the given message object.
+
     :param message: discord.Message to determine complete config data.
     :return: BlacklistConfig
     """
-    if message.channel.id in blacklist_cache:
-        return blacklist_cache[message.channel.id]
+    if str(message.channel.id) in blacklist_cache:
+        return blacklist_cache[str(message.channel.id)]
 
-    # Start with global, overwrite with server, overwrite with channel
+    # Start with global, overwrite with guild, overwrite with channel
     data = {}
     update_data(data, "global")
-    update_data(data, "server", message.server.id)
-    update_data(data, "channel", message.channel.id)
+    update_data(data, "guild", str(message.guild.id))
+    update_data(data, "channel", str(message.channel.id))
     valid_config = make_config_object(data)
 
     # Add the found config to the channel cache, considering this will always be the channel override
-    blacklist_cache[message.channel.id] = valid_config
+    blacklist_cache[str(message.channel.id)] = valid_config
 
     return valid_config
 
 
 async def delete_message(message: discord.Message, response: str, pattern: str):
-    """ Remove the message and send a response if there is one. 
-    
+    """ Remove the message and send a response if there is one.
+
     :param message: The discord message to delete.
     :param response: The optional response to send, found in a BlacklistConfig.
-    :param pattern: The match pattern found in the deleted message, optional for the response. 
+    :param pattern: The match pattern found in the deleted message, optional for the response.
     """
     await client.delete_message(message)
 
     if response:
         # Parse the response message by replacing keywords
         response = response \
-                   .replace("{user}", message.author.display_name) \
-                   .replace("{mention}", message.author.mention) \
-                   .replace("{channel}", message.channel.mention) \
-                   .replace("{server}", message.server.name) \
-                   .replace("{pattern}", pattern)
+            .replace("{user}", message.author.display_name) \
+            .replace("{mention}", message.author.mention) \
+            .replace("{channel}", message.channel.mention) \
+            .replace("{guild}", message.guild.name) \
+            .replace("{pattern}", pattern)
 
         await client.send_message(message.channel, response)
 
@@ -144,7 +141,7 @@ async def delete_message(message: discord.Message, response: str, pattern: str):
 async def on_message(message: discord.Message):
     """ Handle any message accordingly to the data in the blacklist config. """
     # We don't care about private channels
-    if message.channel.is_private:
+    if isinstance(message.channel, discord.abc.PrivateChannel):
         return
 
     channel_config = complete_config(message)
@@ -154,7 +151,7 @@ async def on_message(message: discord.Message):
         return
 
     # Exclude any members in the exclude list
-    if channel_config.exclude and message.author.id in channel_config.exclude:
+    if channel_config.exclude and str(message.author.id) in channel_config.exclude:
         return
 
     # Check for matching patterns

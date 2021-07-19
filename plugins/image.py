@@ -2,7 +2,6 @@
 
 Commands:
     resize """
-import logging
 import random
 import re
 from functools import partial
@@ -11,6 +10,7 @@ from io import BytesIO
 from PIL import Image, ImageSequence, ImageOps
 import discord
 
+import logging
 import plugins
 from pcbot import utils
 
@@ -28,7 +28,6 @@ try:
 except:
     gif_support = False
 
-
 client = plugins.client  # type: discord.Client
 
 extension_regex = re.compile(r"image/(?P<ext>\w+)(?:\s|$)")
@@ -41,7 +40,7 @@ def convert_image(image_object, mode, real_convert=True):
     """ Convert the image object to a specified mode. """
     if mode == "RGB" and image_object.mode == "RGBA" and real_convert:
         return to_rgb(image_object)
-    
+
     return image_object.convert(mode)
 
 
@@ -70,7 +69,7 @@ class ImageArg:
 
         # Figure out if this is a gif by looking for the duration argument. Might only work for gifs
         self.gif = bool(self.object.info.get("duration"))
-        self.gif_bytes = None   # For easier upload of gifs, store the bytes in memory
+        self.gif_bytes = None  # For easier upload of gifs, store the bytes in memory
 
     def clean_format(self, real_convert=True):
         """ Return working options of JPG images. """
@@ -82,7 +81,6 @@ class ImageArg:
     def set_extension(self, ext: str, real_jpg=True):
         """ Change the extension of an image. """
         self.extension = self.format = ext
-
 
     def modify(self, function, *args, convert=None, **kwargs):
         """ Modify the image object using the given Image function.
@@ -115,11 +113,11 @@ class ImageArg:
             image_bytes = imageio.mimwrite(imageio.RETURN_BYTES, frames, format=self.format, duration=duration)
             self.object = Image.open(BytesIO(image_bytes))
             self.gif_bytes = image_bytes
-    
+
 
 async def convert_attachment(attachment):
-    """ Convert an attachment to an image argument. 
-    
+    """ Convert an attachment to an image argument.
+
     Returns None if the attachment is not an image.
     """
     url = attachment["url"]
@@ -134,10 +132,9 @@ async def convert_attachment(attachment):
     return ImageArg(image_object, format=image_format)
 
 
-
-async def find_prev_image(channel: discord.Channel, limit: int=200):
+async def find_prev_image(channel: discord.TextChannel, limit: int = 200):
     """ Look for the previous sent image. """
-    async for message in client.logs_from(channel, limit):
+    async for message in channel.history(limit=limit):
         if message.attachments:
             # Try to convert the first attachment
             image_arg = await convert_attachment(message.attachments[0])
@@ -162,7 +159,7 @@ async def image(message: discord.Message, url_or_emoji: str):
         # If there is no attached image, look for an image posted previously
         if not image_arg:
             image_arg = await find_prev_image(message.channel)
-        
+
         assert image_arg is not None, "Could not find any previously attached image."
         return image_arg
 
@@ -174,12 +171,13 @@ async def image(message: discord.Message, url_or_emoji: str):
         headers = await utils.retrieve_headers(url_or_emoji)
     except ValueError:  # Not a valid url, let's see if it's a mention
         match = mention_regex.match(url_or_emoji)
+        logging.info(url_or_emoji)
         if match:
-            member = message.server.get_member(match.group("id"))
-            avatar_headers = await utils.retrieve_headers(member.avatar_url)
+            member = message.guild.get_member(int(match.group("id")))
+            avatar_headers = await utils.retrieve_headers(str(member.avatar_url_as(static_format="png")))
             assert not avatar_headers["CONTENT-TYPE"].endswith("gif"), "**GIF avatars are currently unsupported.**"
 
-            image_bytes = await utils.download_file(member.avatar_url.replace(".webp", ".png"), bytesio=True)
+            image_bytes = await utils.download_file(str(member.avatar_url_as(static_format="png")), bytesio=True)
             image_object = Image.open(image_bytes)
             return ImageArg(image_object, format="PNG")
 
@@ -195,7 +193,7 @@ async def image(message: discord.Message, url_or_emoji: str):
         # Not an emoji, perhaps it's an emote
         match = emote_regex.match(url_or_emoji)
         if match:
-            image_object = await get_emote(match.group("id"), message.server)
+            image_object = await get_emote(match.group("id"))
             if image_object:
                 return ImageArg(image_object, format="PNG")
 
@@ -290,18 +288,20 @@ async def resize(message: discord.Message, image_arg: image, resolution: parse_r
         resolution = (int(w * scale), int(h * scale))
 
     # Resize and upload the image
-    image_arg.modify(Image.Image.resize, resolution, Image.NEAREST if "-nearest" in options else Image.ANTIALIAS, convert="RGBA")
+    image_arg.modify(Image.Image.resize, resolution, Image.NEAREST if "-nearest" in options else Image.ANTIALIAS,
+                     convert="RGBA")
     await send_image(message, image_arg)
 
 
 @plugins.command(pos_check=lambda s: s.startswith("-"), aliases="tilt")
-async def rotate(message: discord.Message, image_arg: image, degrees: int, *options, extension: str.lower=None):
+async def rotate(message: discord.Message, image_arg: image, degrees: int, *options, extension: str.lower = None):
     """ Rotate an image clockwise using the given degrees. """
     if extension:
         image_arg.set_extension(extension)
 
     # Rotate and upload the image
-    image_arg.modify(Image.Image.rotate, -degrees, Image.NEAREST if "-nearest" in options else Image.BICUBIC, expand=True, convert="RGBA")
+    image_arg.modify(Image.Image.rotate, -degrees, Image.NEAREST if "-nearest" in options else Image.BICUBIC,
+                     expand=True, convert="RGBA")
     await send_image(message, image_arg)
 
 
@@ -314,12 +314,12 @@ async def convert(message: discord.Message, image_arg: image, extension: str.low
 
 @plugins.command(aliases="jpg")
 async def jpeg(message: discord.Message, image_arg: image, *effect: utils.choice("meme"),
-               quality: utils.int_range(f=0, t=100)=5):
+               quality: utils.int_range(f=0, t=100) = 5):
     """ Give an image some proper jpeg artifacting.
 
     Valid effects are: `meme` """
     image_arg.modify(to_jpg, quality, real_convert=False if "meme" in effect else True)
-    
+
     await send_image(message, image_arg)
 
 
@@ -343,6 +343,7 @@ async def fuckify(message: discord.Message, image_arg: image, seed=None):
 
     await send_image(message, image_arg)
 
+
 @plugins.command()
 async def invert(message: discord.Message, image_arg: image):
     """ Invert the colors of an image. """
@@ -351,7 +352,7 @@ async def invert(message: discord.Message, image_arg: image):
 
 
 @plugins.command()
-async def flip(message: discord.Message, image_arg: image, extension: str.lower=None):
+async def flip(message: discord.Message, image_arg: image, extension: str.lower = None):
     """ Flip an image in the y-axis. """
     if extension:
         image_arg.set_extension(extension)
@@ -365,7 +366,7 @@ async def flip(message: discord.Message, image_arg: image, extension: str.lower=
 
 
 @plugins.command()
-async def mirror(message: discord.Message, image_arg: image, extension: str.lower=None):
+async def mirror(message: discord.Message, image_arg: image, extension: str.lower = None):
     """ Mirror an image along the x-axis. """
     if extension:
         image_arg.set_extension(extension)

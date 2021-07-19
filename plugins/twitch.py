@@ -10,13 +10,14 @@ import discord
 import logging
 from datetime import datetime, timedelta
 
+
 from pcbot import utils, Config
 import plugins
 from plugins.twitchlib import twitch
 client = plugins.client  # type: discord.Client
 
 
-twitch_config = Config("twitch-config", data=dict(servers={}))
+twitch_config = Config("twitch-config", data=dict(guilds={}))
 
 # Keep track of all {member.id: date} that are streaming
 stream_history = {}
@@ -38,17 +39,17 @@ async def twitch_group(message: discord.Message, _: utils.placeholder):
     pass
 
 
-@twitch_group.command(name="channels", permissions="manage_server")
-async def notify_channels(message: discord.Message, *channels: discord.Channel):
+@twitch_group.command(name="channels", permissions="manage_guild")
+async def notify_channels(message: discord.Message, *channels: discord.TextChannel):
     """ Specify channels to notify when a member goes live, or use no arguments to disable. """
-    if message.server.id not in twitch_config.data["servers"]:
-        twitch_config.data["servers"][message.server.id] = {}
+    if str(message.guild.id) not in twitch_config.data["guilds"]:
+        twitch_config.data["guilds"][str(message.guild.id)] = {}
 
-    twitch_config.data["servers"][message.server.id]["notify_channels"] = [c.id for c in channels]
-    twitch_config.save()
+    twitch_config.data["guilds"][str(message.guild.id)]["notify_channels"] = [str(c.id) for c in channels]
+    await twitch_config.asyncsave()
 
     # Tell the user if notifications were disabled
-    assert channels, "**Disabled stream notifications in this server.**"
+    assert channels, "**Disabled stream notifications in this guild.**"
 
     await client.say(message, "**Notifying streams in:** {}".format(utils.format_objects(*channels, sep=" ")))
 
@@ -59,9 +60,9 @@ def make_twitch_embed(member: discord.Member, response: dict):
     :param member: Member object streaming.
     :param response: Dict received through twitch.request("streams").
     """
-    e = discord.Embed(title="Playing " + response["stream"]["game"], url=member.game.url,
-                      description=member.game.name, color=member.color)
-    e.set_author(name=member.display_name, url=member.game.url, icon_url=member.avatar_url)
+    e = discord.Embed(title="Playing " + response["stream"]["game"], url=member.activity.url,
+                      description=member.activity.name, color=member.color)
+    e.set_author(name=member.display_name, url=member.activity.url, icon_url=member.avatar_url)
     e.set_thumbnail(url=response["stream"]["preview"]["small"] + "?date=" + datetime.now().ctime().replace(" ", "%20"))
     return e
 
@@ -69,16 +70,16 @@ def make_twitch_embed(member: discord.Member, response: dict):
 def started_streaming(before: discord.Member, after: discord.Member):
     """ Return True if the member just started streaming, and did not do so recently. """
     # The member is not streaming at the moment
-    if after.game is None or not after.game.type == 1:
+    if after.activity is None or not after.activity.type == discord.ActivityType.streaming:
         return False
 
     # Check if they were also streaming before
-    if before.game and before.game.type == 1:
+    if before.activity and before.activity.type == discord.ActivityType.streaming:
         return False
 
     # Update the stream history
-    previous_stream = stream_history.get(after.id)
-    stream_history[after.id] = datetime.now()
+    previous_stream = stream_history.get(str(after.id))
+    stream_history[str(after.id)] = datetime.now()
 
     # Check that they didn't start streaming recently
     if previous_stream and datetime.now() < (previous_stream + repeat_notification_delta):
@@ -90,8 +91,8 @@ def started_streaming(before: discord.Member, after: discord.Member):
 @plugins.event()
 async def on_member_update(before: discord.Member, after: discord.Member):
     """ Notify given channels whenever a member goes live. """
-    # Return if the server doesn't have any notify channels setup
-    if not twitch_config.data["servers"].get(after.server.id, {}).get("notify_channels", False):
+    # Return if the guild doesn't have any notify channels setup
+    if not twitch_config.data["guilds"].get(str(after.guild.id), {}).get("notify_channels", False):
         return
 
     # Make sure the member just started streaming
@@ -121,5 +122,5 @@ async def on_member_update(before: discord.Member, after: discord.Member):
 
     # Create the embedded message and send it to every stream channel
     embed = make_twitch_embed(after, stream_response)
-    for channel_id in twitch_config.data["servers"][after.server.id]["notify_channels"]:
-        await client.send_message(after.server.get_channel(channel_id), embed=embed)
+    for channel_id in twitch_config.data["guilds"][str(after.guild.id)]["notify_channels"]:
+        await client.send_message(after.guild.get_channel(int(channel_id)), embed=embed)
